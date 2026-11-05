@@ -91,8 +91,6 @@ export const en = {
   accountTokenHint:
     "Select the repositories you need. Grant Contents read access to clone and pull, and read/write access to push. Organization repositories may also require approval or SSO authorization.",
   accountCreateToken: "Create a GitHub token",
-  accountScopeHint:
-    "GitHub login, commit author and SSH keys are managed independently. Repository bindings take priority over the default account. Choose System Git / SSH to use your existing SSH keys. Remote SSH workspaces and terminals use credentials on their host.",
   accountConnect: "Connect GitHub account",
   accountLater: "Continue locally",
   accountInvalidToken:
@@ -417,8 +415,6 @@ export const zh: Record<MessageKey, string> = {
   accountTokenHint:
     "请选择需要访问的仓库。克隆和拉取需要 Contents 读取权限，推送需要读写权限。组织仓库还可能需要管理员批准或 SSO 授权。",
   accountCreateToken: "创建 GitHub 令牌",
-  accountScopeHint:
-    "GitHub 登录、提交作者和 SSH 密钥分别管理。仓库绑定优先于默认账号；选择“系统 Git / SSH”可沿用已有 SSH 密钥。远程 SSH 工作区和终端使用所在机器的凭据。",
   accountConnect: "连接 GitHub 账号",
   accountLater: "先使用本地仓库",
   accountInvalidToken: "GitHub 拒绝了此令牌，请检查令牌内容、权限和有效期。",

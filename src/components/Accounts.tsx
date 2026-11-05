@@ -378,7 +378,6 @@ export function AccountsProvider({ children }: { children: ReactNode }) {
                 </button>
               </form>
             </details>
-            <p className="dialog-description">{t("accountScopeHint")}</p>
             {error && (
               <p role="alert" className="inline-error">
                 {error}
