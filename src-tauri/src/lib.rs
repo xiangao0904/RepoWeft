@@ -3,6 +3,7 @@ mod avatars;
 mod diffs;
 mod git;
 mod oauth;
+mod shutdown;
 mod ssh;
 mod tasks;
 mod terminal;
@@ -19,6 +20,7 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             use tauri::Manager;
+            shutdown::install(app.handle())?;
             if let Some(window) = app.get_webview_window("main") {
                 window.set_icon(tauri::include_image!("icons/128x128@2x.png"))?;
             }
@@ -82,6 +84,15 @@ pub fn run() {
             terminal::terminal_ack,
             terminal::terminal_close
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                use tauri::Manager;
+                app.state::<terminal::TerminalState>().close_all();
+            }
+        });
 }

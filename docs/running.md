@@ -37,3 +37,13 @@ Switching branches in RepoWeft's own source checkout can change those watched fi
 Vite updates React components separately. Shared non-component functions belong in `src/lib` so they do not invalidate React Fast Refresh boundaries.
 
 If a standalone app exits, record the time and any console or Windows application-error event. Native panic messages, process exit codes, or WebView errors help distinguish an actual runtime failure from development restarts.
+
+## Windows console interrupts
+
+RepoWeft routes Ctrl+C and Ctrl+Break through Tauri's normal exit request and closes terminal sessions on exit. The handler is registered only when the desktop process is attached to a console. Git credential-helper and SSH askpass child invocations return before this handler is installed; child Git/SSH processes retain their normal console behavior.
+
+Some input methods load CrashRpt into host processes. CrashRpt supports SIGINT handling, which can turn Ctrl+C into a crash-reporting path. If its CrashSender executable is missing, an error reporter can remain open after the interrupt. The application console handler consumes the interrupt before the CRT signal path and requests an orderly shutdown instead of disabling input methods or suppressing real exceptions.
+
+The Windows regression test `shutdown::windows::tests::interrupts_bypass_legacy_handlers_in_isolated_console` is ignored by the regular suite. It must run in a separate hidden console with `REPOWEFT_ISOLATED_CONSOLE_TEST=1`. Before generating Ctrl+C/Ctrl+Break, it verifies that its console contains only its own process, then checks that a previously registered handler was bypassed. Never generate console control events in a shared development terminal.
+
+References: [Windows console handlers](https://learn.microsoft.com/windows/console/setconsolectrlhandler), [CrashRpt signal handling](https://crashrpt.sourceforge.net/docs/html/_crash_rpt_8h.html).
