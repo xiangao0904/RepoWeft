@@ -52,3 +52,19 @@ test("octopus merges allocate enough horizontal room", () => {
   assert.equal(new Set(graph.points.slice(1).map((p) => p.lane)).size, 8);
   assert.ok(graph.width > 25 + 7 * 20);
 });
+
+test("indexed edge queries match a full scan including long merge edges", () => {
+  const commits = Array.from({ length: 1000 }, (_, i) =>
+    commit(
+      `c${i}`,
+      i === 999 ? [] : [`c${i + 1}`, ...(i % 7 === 0 ? ["c999"] : [])],
+    ),
+  );
+  const graph = layoutGraph(commits);
+  for (let start = 0; start < 1000; start += 31) {
+    assert.deepEqual(
+      graph.visibleEdges(start, start + 24),
+      graph.edges.filter((edge) => edge.to >= start && edge.from <= start + 24),
+    );
+  }
+});

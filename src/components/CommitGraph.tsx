@@ -18,28 +18,26 @@ export function CommitGraph({
       height={graph.points.length * rowHeight}
       aria-hidden="true"
     >
-      {graph.edges
-        .filter((edge) => edge.to >= start && edge.from <= end)
-        .map((edge, i) => {
-          const x1 = 25 + edge.fromLane * 20,
-            x2 = 25 + edge.toLane * 20;
-          const y1 = edge.from * rowHeight + rowHeight / 2,
-            y2 = edge.to * rowHeight + rowHeight / 2;
-          return (
-            <path
-              key={i}
-              d={
-                x1 === x2
-                  ? `M ${x1} ${y1} V ${y2}`
-                  : `M ${x1} ${y1} C ${x1} ${y1 + rowHeight / 4}, ${x2} ${y1 + rowHeight / 4}, ${x2} ${y1 + rowHeight / 2} V ${y2}`
-              }
-              fill="none"
-              stroke={edge.color}
-              strokeWidth="2"
-              opacity=".85"
-            />
-          );
-        })}
+      {graph.visibleEdges(start, end).map((edge, i) => {
+        const x1 = 25 + edge.fromLane * 20,
+          x2 = 25 + edge.toLane * 20;
+        const y1 = edge.from * rowHeight + rowHeight / 2,
+          y2 = edge.to * rowHeight + rowHeight / 2;
+        return (
+          <path
+            key={i}
+            d={
+              x1 === x2
+                ? `M ${x1} ${y1} V ${y2}`
+                : `M ${x1} ${y1} C ${x1} ${y1 + rowHeight / 4}, ${x2} ${y1 + rowHeight / 4}, ${x2} ${y1 + rowHeight / 2} V ${y2}`
+            }
+            fill="none"
+            stroke={edge.color}
+            strokeWidth="2"
+            opacity=".85"
+          />
+        );
+      })}
       {graph.points.slice(start, end).map((point, index) => {
         const i = start + index;
         return (

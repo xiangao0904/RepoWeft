@@ -51,5 +51,39 @@ export function layoutGraph(commits: Commit[]) {
       });
     });
   }
-  return { points, edges, width: Math.max(66, 45 + maxLane * 20) };
+  return {
+    points,
+    edges,
+    visibleEdges: indexEdges(edges),
+    width: Math.max(66, 45 + maxLane * 20),
+  };
+}
+
+// Edges are ordered by their start row. Max end rows let us skip entire offscreen ranges.
+export function indexEdges<T extends { from: number; to: number }>(edges: T[]) {
+  const maxEnd = new Int32Array(Math.max(1, edges.length * 4));
+  function build(node: number, left: number, right: number): number {
+    if (left === right) return (maxEnd[node] = edges[left].to);
+    const middle = (left + right) >>> 1;
+    return (maxEnd[node] = Math.max(
+      build(node * 2, left, middle),
+      build(node * 2 + 1, middle + 1, right),
+    ));
+  }
+  if (edges.length) build(1, 0, edges.length - 1);
+  return (start: number, end: number) => {
+    const result: T[] = [];
+    function visit(node: number, left: number, right: number) {
+      if (maxEnd[node] < start || edges[left].from > end) return;
+      if (left === right) {
+        result.push(edges[left]);
+        return;
+      }
+      const middle = (left + right) >>> 1;
+      visit(node * 2, left, middle);
+      visit(node * 2 + 1, middle + 1, right);
+    }
+    if (edges.length) visit(1, 0, edges.length - 1);
+    return result;
+  };
 }
