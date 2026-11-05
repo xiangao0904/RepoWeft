@@ -5,7 +5,7 @@ RepoWeft runs these operations through the installed Git client for local reposi
 ## Available controls
 
 - History keeps the original commit list layout, with branch and tag labels on the metadata line after the author, abbreviated hash, and timestamp. Commit titles and metadata keep a consistent left alignment. Labels only occupy space on rows that have references; no separate reference column is reserved. Computer and cloud icons distinguish local branches from remote tracking branches; a check marks the current branch. Ahead/behind counts appear in the current branch tooltip. Remote tracking references represent the last fetched state.
-- Right-click a commit, or select it and open Commit actions, to create a branch or lightweight tag, check out a detached revision, reset the current branch, revert, cherry-pick, merge, rebase, or edit its message.
+- Right-click a commit, or select it and open Commit actions, to open a compact grouped menu next to the pointer or button. The menu supports keyboard navigation, viewport edge positioning, and dismissal on outside clicks or scrolling. Choose an action to create a branch or lightweight tag, check out a detached revision, reset the current branch, revert, cherry-pick, merge, rebase, or edit its message.
 - Reset offers soft, mixed, and hard modes with an explanation before execution.
 - Editing an older message replays a linear history, preserving empty commits and file trees. A clean working directory and an attached branch are required. Histories containing merges are rejected before rewriting.
 - Changes supports staging, unstaging, discarding unstaged changes, empty commits, and amending the latest commit with staged changes. A nonempty message is always required.

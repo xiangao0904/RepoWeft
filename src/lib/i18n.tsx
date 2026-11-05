@@ -1,6 +1,15 @@
 import { createContext, useContext } from "react";
 
 export const en = {
+  contextCheckout: "Check out commit…",
+  contextBranch: "Create branch here…",
+  contextTag: "Create tag here…",
+  contextMerge: "Merge into current branch…",
+  contextRebase: "Rebase current branch here…",
+  contextCherryPick: "Cherry-pick commit…",
+  contextReword: "Edit commit message",
+  contextRevert: "Revert commit…",
+  contextReset: "Reset current branch here…",
   moreReferences: "More branches and tags at this commit",
   oursVersion: "Ours",
   theirsVersion: "Theirs",
@@ -428,6 +437,15 @@ export const en = {
 export type MessageKey = keyof typeof en;
 export type Locale = "en" | "zh-CN";
 export const zh: Record<MessageKey, string> = {
+  contextCheckout: "检出此提交…",
+  contextBranch: "从此处创建分支…",
+  contextTag: "在此处创建标签…",
+  contextMerge: "合并到当前分支…",
+  contextRebase: "将当前分支变基到此处…",
+  contextCherryPick: "应用此提交…",
+  contextReword: "修改提交说明",
+  contextRevert: "撤销此提交…",
+  contextReset: "将当前分支重置到此处…",
   moreReferences: "此提交上的更多分支和标签",
   oursVersion: "我方版本",
   theirsVersion: "对方版本",

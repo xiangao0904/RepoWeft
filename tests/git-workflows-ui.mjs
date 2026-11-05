@@ -63,6 +63,14 @@ try {
     const hash = "1".repeat(40);
     window.qaHeadIndex = 0;
     window.qaActions = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (value) => {
+          window.qaClipboard = value;
+        },
+      },
+    });
     window.qaConflict = false;
     window.isTauri = true;
     window.__TAURI_INTERNALS__ = {
@@ -328,12 +336,10 @@ try {
     );
   };
   await checkDenseRefs();
-  await page
-    .locator(".history-panel")
-    .screenshot({
-      animations: "disabled",
-      path: path.join(tmpdir(), "repoweft-history-metadata-light.png"),
-    });
+  await page.locator(".history-panel").screenshot({
+    animations: "disabled",
+    path: path.join(tmpdir(), "repoweft-history-metadata-light.png"),
+  });
   await page.setViewportSize({ width: 1100, height: 1000 });
   await checkDenseRefs();
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -383,7 +389,63 @@ try {
     ),
     true,
   );
-  await page.locator(".commit-row").first().click({ button: "right" });
+  const firstRow = page.locator(".commit-row").first();
+  await firstRow.click({ button: "right", position: { x: 160, y: 15 } });
+  await page.getByRole("menu").waitFor();
+  assert.equal(await page.getByRole("dialog").count(), 0);
+  assert.equal(await page.getByRole("menuitem").count(), 10);
+  assert.equal(await page.getByRole("menu").getByRole("separator").count(), 3);
+  const rowBounds = await firstRow.boundingBox();
+  const menuBounds = await page.getByRole("menu").boundingBox();
+  assert.ok(Math.abs(menuBounds.x - rowBounds.x - 160) <= 1);
+  assert.ok(Math.abs(menuBounds.y - rowBounds.y - 15) <= 1);
+  await page.screenshot({
+    animations: "disabled",
+    path: path.join(tmpdir(), "repoweft-commit-context-menu.png"),
+  });
+  await page
+    .locator(".history-panel")
+    .screenshot({
+      animations: "disabled",
+      path: path.join(tmpdir(), "repoweft-commit-context-menu-preview.png"),
+    });
+  await page.mouse.click(230, 115);
+  assert.equal(await page.getByRole("menu").count(), 0);
+  await firstRow.focus();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menu").waitFor();
+  await page.keyboard.press("ArrowDown");
+  assert.equal(
+    await page.evaluate(() => document.activeElement.textContent),
+    "Create branch here…",
+  );
+  await page.keyboard.press("End");
+  assert.equal(
+    await page.evaluate(() => document.activeElement.textContent),
+    "Copy commit hash",
+  );
+  await page.keyboard.press("Escape");
+  assert.equal(await page.getByRole("menu").count(), 0);
+  assert.equal(
+    await firstRow.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await firstRow.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Copy commit hash" }).click();
+  assert.equal(await page.evaluate(() => window.qaClipboard), "1".repeat(40));
+  assert.equal(await page.getByRole("menu").count(), 0);
+  await firstRow.dispatchEvent("contextmenu", { clientX: 1438, clientY: 998 });
+  await page.getByRole("menu").waitFor();
+  const edgeBounds = await page.getByRole("menu").boundingBox();
+  assert.ok(
+    edgeBounds.x >= 8 &&
+      edgeBounds.y >= 8 &&
+      edgeBounds.x + edgeBounds.width <= 1432 &&
+      edgeBounds.y + edgeBounds.height <= 992,
+  );
+  await page.locator(".commit-list-scroll").dispatchEvent("scroll");
+  assert.equal(await page.getByRole("menu").count(), 0);
+  await firstRow.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Edit commit message" }).click();
   assert.equal(
     await page

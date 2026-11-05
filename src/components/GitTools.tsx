@@ -175,18 +175,19 @@ export function ConflictEditor({
 
 export function CommitActions({
   commit,
+  kind,
   busy,
   onAction,
   onClose,
 }: {
   commit: Commit;
+  kind: GitAction;
   busy: boolean;
   onAction: Run;
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const [kind, setKind] = useState<GitAction | null>(null);
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(kind === "reword" ? commit.message : "");
   const [mode, setMode] = useState("mixed");
   const options: [GitAction, MessageKey][] = [
     ["checkoutCommit", "checkoutCommit"],
@@ -203,7 +204,7 @@ export function CommitActions({
     kind === "createBranch" || kind === "createTag" || kind === "reword";
   return (
     <Modal
-      title={t("commitActions")}
+      title={t(options.find(([action]) => action === kind)![1])}
       onClose={() => {
         if (!busy) onClose();
       }}
@@ -211,90 +212,67 @@ export function CommitActions({
       <div className="modal-content git-operation-dialog">
         <strong>{commit.message}</strong>
         <code>{commit.hash}</code>
-        {!kind ? (
-          <div className="commit-action-menu" role="menu">
-            {options.map(([action, label]) => (
-              <button
-                role="menuitem"
-                key={action}
-                disabled={busy}
-                onClick={() => {
-                  setKind(action);
-                  setValue(action === "reword" ? commit.message : "");
-                }}
-              >
-                {t(label)}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (busy) return;
-              void onAction({
-                kind,
-                value: needsValue ? value.trim() : commit.hash,
-                extra:
-                  kind === "reset"
-                    ? mode
-                    : needsValue
-                      ? commit.hash
-                      : undefined,
-              }).then((ok) => {
-                if (ok) onClose();
-              });
-            }}
-          >
-            <h3>{t(options.find(([action]) => action === kind)![1])}</h3>
-            <p>
-              {t(
-                kind === "reword"
-                  ? "rewordWarning"
-                  : kind === "reset"
-                    ? "resetWarning"
-                    : "historyWarning",
-              )}
-            </p>
-            {needsValue && (
-              <textarea
-                required
-                autoFocus
-                aria-label={t("actionValue")}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                rows={kind === "reword" ? 5 : 2}
-              />
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (busy) return;
+            void onAction({
+              kind,
+              value: needsValue ? value.trim() : commit.hash,
+              extra:
+                kind === "reset" ? mode : needsValue ? commit.hash : undefined,
+            }).then((ok) => {
+              if (ok) onClose();
+            });
+          }}
+        >
+          <p>
+            {t(
+              kind === "reword"
+                ? "rewordWarning"
+                : kind === "reset"
+                  ? "resetWarning"
+                  : "historyWarning",
             )}
-            {kind === "reset" && (
-              <select
-                aria-label={t("resetMode")}
-                value={mode}
-                onChange={(e) => setMode(e.target.value)}
-              >
-                <option value="soft">{t("resetSoft")}</option>
-                <option value="mixed">{t("resetMixed")}</option>
-                <option value="hard">{t("resetHard")}</option>
-              </select>
-            )}
-            <footer>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={busy}
-                onClick={() => setKind(null)}
-              >
-                {t("back")}
-              </button>
-              <button
-                className="primary-button"
-                disabled={busy || (needsValue && !value.trim())}
-              >
-                {t("confirm")}
-              </button>
-            </footer>
-          </form>
-        )}
+          </p>
+          {needsValue && (
+            <textarea
+              required
+              autoFocus
+              aria-label={t("actionValue")}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              rows={kind === "reword" ? 5 : 2}
+            />
+          )}
+          {kind === "reset" && (
+            <select
+              aria-label={t("resetMode")}
+              value={mode}
+              onChange={(e) => setMode(e.target.value)}
+            >
+              <option value="soft">{t("resetSoft")}</option>
+              <option value="mixed">{t("resetMixed")}</option>
+              <option value="hard">{t("resetHard")}</option>
+            </select>
+          )}
+          <footer>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busy}
+              onClick={onClose}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              className="primary-button"
+              disabled={busy || (needsValue && !value.trim())}
+            >
+              {t("confirm")}
+            </button>
+          </footer>
+        </form>
       </div>
     </Modal>
   );

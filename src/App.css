@@ -3638,21 +3638,54 @@ textarea,
   border: 1px solid var(--border);
   border-radius: 6px;
 }
-.commit-action-menu {
-  display: grid;
-  gap: 4px;
+.commit-context-menu {
+  position: fixed;
+  z-index: 1000;
+  width: 288px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow: auto;
+  padding: 5px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow:
+    0 8px 28px #0005,
+    0 2px 5px #0002;
 }
-.commit-action-menu button {
-  text-align: left;
+.commit-context-menu button {
+  display: block;
+  width: calc(100% - 8px);
+  height: 30px;
+  margin: 0 4px;
+  padding: 0 14px;
   border: 0;
+  border-radius: 4px;
   background: transparent;
   color: inherit;
-  padding: 10px;
-  border-radius: 5px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
+  outline: none;
 }
-.commit-action-menu button:hover {
-  background: var(--surface-hover);
+.commit-context-menu button:hover:not(:disabled),
+.commit-context-menu button:focus-visible {
+  color: #fff;
+  background: var(--accent-solid);
+}
+.commit-context-menu button:disabled {
+  color: var(--subtle);
+  cursor: default;
+}
+.context-menu-divider {
+  height: 1px;
+  margin: 5px 0;
+  background: var(--border);
 }
 .conflict-versions {
   display: grid;

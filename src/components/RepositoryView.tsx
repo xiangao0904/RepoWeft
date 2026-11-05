@@ -45,6 +45,7 @@ import type {
 import { relativeTime, useI18n, errorText, type MessageKey } from "../lib/i18n";
 import { gitService } from "../services/git";
 import { Avatar, Splitter, BranchBadge, Empty, Modal } from "./ui";
+import { CommitContextMenu, type CommitMenuAction } from "./CommitContextMenu";
 import { CommitGraph } from "./CommitGraph";
 import { githubRepository } from "../lib/avatars";
 import { layoutGraph } from "../lib/graph";
@@ -96,7 +97,7 @@ const CommitRow = memo(function CommitRow({
   remoteNames,
   tracking,
 }: {
-  onContext: (commit: Commit) => void;
+  onContext: (commit: Commit, position: { x: number; y: number }) => void;
   remoteNames: string[];
   tracking?: Snapshot["tracking"];
   commit: Commit;
@@ -109,9 +110,21 @@ const CommitRow = memo(function CommitRow({
     <button
       className={`commit-row ${selected ? "selected" : ""}`}
       onClick={() => onSelect(c)}
+      onKeyDown={(e) => {
+        if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+          e.preventDefault();
+          const bounds = e.currentTarget.getBoundingClientRect();
+          onContext(c, { x: bounds.left + 24, y: bounds.top + 20 });
+        }
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
-        onContext(c);
+        e.currentTarget.focus();
+        const bounds = e.currentTarget.getBoundingClientRect();
+        onContext(c, {
+          x: e.clientX || bounds.left + 24,
+          y: e.clientY || bounds.top + 20,
+        });
       }}
     >
       <div className="commit-row-body">
@@ -171,18 +184,41 @@ const CommitRow = memo(function CommitRow({
 function History(props: RepoViewProps) {
   const { repo, data, notify } = props;
   const { t, locale } = useI18n();
-  const [actionCommit, setActionCommit] = useState<Commit | null>(null);
+  const actionRequest = useRef(0);
+  const [context, setContext] = useState<{
+    commit: Commit;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [actionCommit, setActionCommit] = useState<{
+    commit: Commit;
+    kind: CommitMenuAction;
+  } | null>(null);
   const openActions = useCallback(
-    (commit: Commit) => {
+    (commit: Commit, position: { x: number; y: number }) => {
+      actionRequest.current++;
+      setContext({ commit, ...position });
+    },
+    [],
+  );
+  const chooseAction = (kind: CommitMenuAction) => {
+    if (!context || props.busy) return;
+    const commit = context.commit;
+    const request = ++actionRequest.current;
+    setContext(null);
+    if (kind === "reword") {
       void gitService
         .detail(repo, commit.hash)
-        .then((detail) =>
-          setActionCommit({ ...commit, message: detail.message }),
-        )
+        .then((detail) => {
+          if (actionRequest.current === request)
+            setActionCommit({
+              commit: { ...commit, message: detail.message },
+              kind,
+            });
+        })
         .catch((error) => notify(errorText(error, t), true));
-    },
-    [repo, notify, t],
-  );
+    } else setActionCommit({ commit, kind });
+  };
   const remoteNames = useMemo(
     () => data.remotes.map((r) => r.name),
     [data.remotes],
@@ -398,9 +434,28 @@ function History(props: RepoViewProps) {
       className="history-layout density-compact"
       style={{ "--commit-height": `${rowHeight}px` } as CSSProperties}
     >
+      {context && (
+        <CommitContextMenu
+          key={`${context.commit.hash}:${context.x}:${context.y}`}
+          x={context.x}
+          y={context.y}
+          busy={props.busy}
+          onChoose={chooseAction}
+          onClose={() => setContext(null)}
+          onCopy={() => {
+            const hash = context.commit.hash;
+            setContext(null);
+            void navigator.clipboard
+              .writeText(hash)
+              .catch((error) => notify(errorText(error, t), true));
+          }}
+        />
+      )}
       {actionCommit && (
         <CommitActions
-          commit={actionCommit}
+          key={`${actionCommit.commit.hash}:${actionCommit.kind}`}
+          commit={actionCommit.commit}
+          kind={actionCommit.kind}
           busy={props.busy}
           onAction={props.onAction}
           onClose={() => setActionCommit(null)}
@@ -681,7 +736,13 @@ function History(props: RepoViewProps) {
                 <button
                   className="secondary-button"
                   disabled={props.busy}
-                  onClick={() => openActions(selected)}
+                  onClick={(e) => {
+                    const bounds = e.currentTarget.getBoundingClientRect();
+                    openActions(selected, {
+                      x: bounds.left,
+                      y: bounds.bottom + 4,
+                    });
+                  }}
                 >
                   {t("commitActions")}
                 </button>
