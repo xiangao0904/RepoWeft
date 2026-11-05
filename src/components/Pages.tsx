@@ -117,7 +117,7 @@ export function Home(props: RepositoriesProps) {
         </div>
         <RepositoryTable
           {...props}
-          repositories={props.repositories.slice(0, 5)}
+          repositories={props.repositories.slice(0, 20)}
         />
       </div>
     </div>
