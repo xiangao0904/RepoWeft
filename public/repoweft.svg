@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>RepoWeft</title>
+  <defs>
+    <linearGradient id="tile" x1="160" y1="64" x2="864" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#25263E"/>
+      <stop offset="1" stop-color="#12131F"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#tile)"/>
+  <rect x="34" y="34" width="956" height="956" rx="222" stroke="#9594DE" stroke-opacity=".18" stroke-width="4"/>
+  <svg x="104" y="258" width="816" height="470" viewBox="306 332 640 368">
+  <defs>
+    <linearGradient id="left" x1="377" y1="421" x2="463" y2="584" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#619CEB"/><stop offset=".5" stop-color="#507CC6"/><stop offset="1" stop-color="#353F83"/>
+    </linearGradient>
+    <linearGradient id="under" x1="548" y1="555" x2="649" y2="684" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#302D70"/><stop offset=".58" stop-color="#5052B8"/><stop offset="1" stop-color="#7777F7"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="690" y1="570" x2="647" y2="638" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2D296B"/><stop offset="1" stop-color="#48459D"/>
+    </linearGradient>
+    <linearGradient id="right" x1="868" y1="428" x2="782" y2="586" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8073FA"/><stop offset=".52" stop-color="#5B52CF"/><stop offset="1" stop-color="#362F93"/>
+    </linearGradient>
+    <linearGradient id="front" x1="464" y1="617" x2="672" y2="453" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7AC9FA"/><stop offset=".43" stop-color="#72B3F8"/><stop offset="1" stop-color="#7975FF"/>
+    </linearGradient>
+    <linearGradient id="over" x1="632" y1="487" x2="776" y2="634" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4540A9"/><stop offset=".4" stop-color="#7375F2"/><stop offset="1" stop-color="#8B7DFF"/>
+    </linearGradient>
+    <linearGradient id="blueNode" x1="341" y1="367" x2="413" y2="438" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6DA9F1"/><stop offset="1" stop-color="#639BE9"/>
+    </linearGradient>
+    <linearGradient id="purpleNode" x1="842" y1="365" x2="910" y2="440" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8272F9"/><stop offset="1" stop-color="#796AF1"/>
+    </linearGradient>
+    <linearGradient id="word" x1="650" y1="747" x2="1022" y2="876" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D2CCFF"/><stop offset="1" stop-color="#C2B8F5"/>
+    </linearGradient>
+    <path id="e" fill-rule="evenodd" d="M425 828H353C356 843 367 851 381 851C391 851 399 847 406 839L420 850C410 863 397 869 380 869C351 869 331 850 331 822C331 795 351 774 378 774C406 774 425 794 425 822ZM353 813H404C401 799 392 791 379 791C366 791 356 799 353 813Z"/>
+  </defs>
+  <g id="symbol">
+    <path fill="url(#left)" d="M359 440L411 425C437 474 462 516 493 555L470 603L430 585C404 534 380 485 359 440Z"/>
+    <path fill="url(#under)" d="M534 596L574 550C603 583 625 610 650 629C663 638 675 642 687 637L663 665C644 685 615 685 595 666Z"/>
+    <path fill="url(#fold)" d="M628 612L674 559L715 606L687 637C669 646 648 633 628 612Z"/>
+    <path fill="url(#right)" d="M756 555C783 516 812 471 839 425L890 440C870 489 845 541 820 586L792 608Z"/>
+    <path fill="url(#front)" d="M430 584C450 596 472 573 495 545L552 478C578 449 601 438 622 440C655 438 683 470 714 506C680 477 657 480 622 504C600 526 575 558 550 587L521 621C500 646 470 647 451 624C443 611 437 598 430 584Z"/>
+    <path fill="url(#over)" d="M622 504C650 480 678 475 714 506L761 558C782 580 802 593 820 585L802 620C786 646 755 647 731 625C697 591 658 544 622 504Z"/>
+    <circle cx="375.5" cy="402" r="48" fill="url(#blueNode)"/>
+    <circle cx="875.5" cy="402" r="48" fill="url(#purpleNode)"/>
+  </g>
+  </svg>
+</svg>

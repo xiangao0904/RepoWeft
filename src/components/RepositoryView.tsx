@@ -1,0 +1,1145 @@
+import { createPageGate } from "../lib/paging";
+import {
+  memo,
+  useEffect,
+  useCallback,
+  useDeferredValue,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  Copy,
+  FileCode2,
+  FileText,
+  GitBranch,
+  GitCommitHorizontal,
+  GitMerge,
+  Globe2,
+  LoaderCircle,
+  Minus,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
+import type {
+  Action,
+  Commit,
+  CommitDetail,
+  FileChange,
+  Repository,
+  Snapshot,
+} from "../types";
+import { relativeTime, useI18n, type MessageKey } from "../lib/i18n";
+import { gitService } from "../services/git";
+import { Avatar, Splitter, BranchBadge, Empty } from "./ui";
+import { CommitGraph } from "./CommitGraph";
+import { githubRepository } from "../lib/avatars";
+import { layoutGraph } from "../lib/graph";
+
+import { useStored } from "../lib/storage";
+
+export type RepoTab = "history" | "changes" | "branches" | "remotes";
+export interface RepoViewProps {
+  terminal?: ReactNode;
+  repo: Repository;
+  data: Snapshot;
+  tab: RepoTab;
+  busy: boolean;
+  onAction: (action: Action) => Promise<boolean>;
+  onPrompt: (type: "branch" | "remote") => void;
+  onConfirm: (message: MessageKey, action: Action) => void;
+  notify: (message: string, error?: boolean) => void;
+}
+
+export function RepositoryView(props: RepoViewProps) {
+  if (props.tab === "history")
+    return <History {...props} key={props.repo.id} />;
+  return (
+    <div className="repository-center-column">
+      {props.tab === "changes" ? (
+        <Changes {...props} key={props.repo.id} />
+      ) : (
+        <RepositoryLists {...props} />
+      )}
+      {props.terminal}
+    </div>
+  );
+}
+
+const CommitRow = memo(function CommitRow({
+  commit: c,
+  selected,
+  githubRepo,
+  onSelect,
+}: {
+  commit: Commit;
+  selected: boolean;
+  githubRepo: string | null;
+  onSelect: (commit: Commit) => void;
+}) {
+  const { t, locale } = useI18n();
+  return (
+    <button
+      className={`commit-row ${selected ? "selected" : ""}`}
+      onClick={() => onSelect(c)}
+    >
+      <div className="commit-row-title">
+        <strong>{c.message}</strong>
+        {c.refs.slice(0, 2).map((ref) => (
+          <BranchBadge key={ref} name={ref} />
+        ))}
+      </div>
+      <div className="commit-meta">
+        <Avatar
+          name={c.author}
+          email={c.email}
+          githubRepo={githubRepo}
+          hash={c.hash}
+        />
+        <span>{c.author}</span>
+        <span className="meta-dot">·</span>
+        <code>{c.hash.slice(0, 7)}</code>
+        <span className="meta-dot">·</span>
+        <span>{relativeTime(c.timestamp, locale, t)}</span>
+      </div>
+    </button>
+  );
+});
+
+function History(props: RepoViewProps) {
+  const { repo, data, notify } = props;
+  const { t, locale } = useI18n();
+  const [commits, setCommits] = useState(data.commits);
+  const [selected, setSelected] = useState<Commit | null>(null);
+  const [query, setQuery] = useState("");
+  const searchQuery = useDeferredValue(query.trim().toLowerCase());
+  const [currentOnly, setCurrentOnly] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(data.commits.length === 100);
+  const [detail, setDetail] = useState<CommitDetail | null>(null);
+  const [detailError, setDetailError] = useState("");
+  const [detailTab, setDetailTab] = useState<"details" | "files">("details");
+  const [file, setFile] = useState<string | null>(null);
+  const [workingDiff, setWorkingDiff] = useState<{
+    path: string;
+    staged: boolean;
+    untracked: boolean;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const pageGate = useRef(createPageGate());
+  const [pageError, setPageError] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const [inspectorWidth, setInspectorWidth] = useStored("inspectorWidth", 350);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const rowHeight = 44;
+  const githubRepo = useMemo(
+    () =>
+      data.remotes.map((r) => githubRepository(r.url)).find(Boolean) ?? null,
+    [data.remotes],
+  );
+  const [viewportHeight, setViewportHeight] = useState(880);
+  const [scrollTop, setScrollTop] = useState(0);
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setViewportHeight(Math.ceil(entry.contentRect.height)),
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    setScrollTop(0);
+  }, [query, currentOnly, data.branch]);
+  useEffect(() => {
+    const request = pageGate.current.invalidate();
+    let cancelled = false;
+    setPageError(false);
+    if (!currentOnly) {
+      setCommits(data.commits);
+      setHasMore(data.commits.length === 100);
+      setSelected(
+        (old) => data.commits.find((c) => c.hash === old?.hash) ?? null,
+      );
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    void gitService
+      .log(repo, 0, currentOnly)
+      .then((next) => {
+        if (cancelled || !pageGate.current.isCurrent(request)) return;
+        setCommits(next);
+        setHasMore(next.length === 100);
+        setSelected((old) => next.find((c) => c.hash === old?.hash) ?? null);
+      })
+      .catch((error) => {
+        if (!cancelled) notify(String(error), true);
+      })
+      .finally(() => {
+        if (!cancelled && pageGate.current.isCurrent(request))
+          setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      pageGate.current.invalidate();
+    };
+  }, [repo, data.commits, currentOnly, notify]);
+  useEffect(() => {
+    let cancelled = false;
+    setDetail(null);
+    setDetailError("");
+    setFile(null);
+    if (selected)
+      gitService
+        .detail(repo, selected.hash)
+        .then((value) => {
+          if (!cancelled) setDetail(value);
+        })
+        .catch((error) => {
+          if (!cancelled) setDetailError(String(error));
+        });
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, selected?.hash]);
+  const loadMore = useCallback(async () => {
+    if (loading || !hasMore || pageError) return;
+    const request = pageGate.current.begin();
+    if (request === null) return;
+    setLoading(true);
+    try {
+      const next = await gitService.log(repo, commits.length, currentOnly);
+      if (pageGate.current.isCurrent(request)) {
+        setCommits((previous) => [...previous, ...next]);
+        setHasMore(next.length === 100);
+      }
+    } catch (error) {
+      if (pageGate.current.isCurrent(request)) {
+        setPageError(true);
+        notify(String(error), true);
+      }
+    } finally {
+      if (pageGate.current.finish(request)) {
+        setLoading(false);
+      }
+    }
+  }, [repo, commits.length, currentOnly, loading, hasMore, pageError, notify]);
+  useEffect(() => {
+    const target = sentinelRef.current;
+    if (!target || !hasMore || pageError) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (
+          entry.isIntersecting &&
+          (!searchQuery ||
+            (scrollRef.current &&
+              scrollRef.current.scrollHeight > scrollRef.current.clientHeight))
+        )
+          void loadMore();
+      },
+      { root: scrollRef.current, rootMargin: "0px 0px 440px 0px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [loadMore, hasMore, pageError, searchQuery]);
+  const visible = useMemo(
+    () =>
+      commits.filter((c) =>
+        `${c.message} ${c.author} ${c.hash}`
+          .toLowerCase()
+          .includes(searchQuery),
+      ),
+    [commits, searchQuery],
+  );
+  const graph = useMemo(
+    () =>
+      layoutGraph(
+        currentOnly
+          ? visible.map((commit) => ({
+              ...commit,
+              parents: commit.parents.slice(0, 1),
+            }))
+          : visible,
+      ),
+    [visible, currentOnly],
+  );
+  const start = Math.min(
+    Math.max(0, Math.floor(scrollTop / rowHeight) - 6),
+    Math.max(0, visible.length - 30),
+  );
+  const end = Math.min(
+    visible.length,
+    start + Math.ceil(viewportHeight / rowHeight) + 12,
+  );
+  return (
+    <div
+      ref={layoutRef}
+      className="history-layout density-compact"
+      style={{ "--commit-height": `${rowHeight}px` } as CSSProperties}
+    >
+      <div className="repository-center-column">
+        {!selected && workingDiff && (
+          <section className="history-main-diff file-diff-panel">
+            <header>
+              <strong>{workingDiff.path}</strong>
+              <button
+                className="icon-button diff-close"
+                title={t("close")}
+                aria-label={t("close")}
+                onClick={() => setWorkingDiff(null)}
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <Diff repo={repo} {...workingDiff} />
+          </section>
+        )}
+        {selected && file && (
+          <section className="history-main-diff file-diff-panel">
+            <header>
+              <FileText size={16} />
+              <strong title={file}>{file}</strong>
+              <button
+                className="icon-button diff-close"
+                title={t("close")}
+                aria-label={t("close")}
+                onClick={() => setFile(null)}
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <Diff
+              key={`${selected.hash}:${file}`}
+              repo={repo}
+              path={file}
+              staged={false}
+              hash={selected.hash}
+            />
+          </section>
+        )}
+        <section
+          className="history-panel"
+          style={
+            (selected && file) || (!selected && workingDiff)
+              ? { display: "none" }
+              : undefined
+          }
+        >
+          <div className="history-filters">
+            <BranchSwitcher {...props} />
+            <div className="segmented-control" aria-label={t("branches")}>
+              {[false, true].map((value) => (
+                <button
+                  key={String(value)}
+                  aria-pressed={currentOnly === value}
+                  onClick={() => {
+                    if (value === currentOnly) return;
+                    pageGate.current.invalidate();
+                    setCommits([]);
+                    setHasMore(false);
+                    setSelected(null);
+                    setLoading(true);
+                    setCurrentOnly(value);
+                  }}
+                >
+                  {t(value ? "currentBranch" : "allBranches")}
+                </button>
+              ))}
+            </div>
+            <div className="search-field">
+              <Search size={14} />
+              <input
+                aria-label={t("searchCommits")}
+                placeholder={t("searchCommits")}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+          </div>
+          <div
+            ref={scrollRef}
+            className="commit-list-scroll"
+            onScroll={(e) => {
+              const top =
+                Math.floor(e.currentTarget.scrollTop / rowHeight) * rowHeight;
+              setScrollTop((previous) => (previous === top ? previous : top));
+            }}
+          >
+            {loading && !commits.length ? (
+              <div
+                className="diff-loading"
+                role="status"
+                aria-label={t("working")}
+              >
+                <LoaderCircle size={20} className="spin" />
+              </div>
+            ) : !visible.length ? (
+              <Empty
+                icon={<GitCommitHorizontal size={30} />}
+                title={t(query ? "noResults" : "noCommits")}
+                description={!query ? t("noCommitsDescription") : undefined}
+              />
+            ) : (
+              <div
+                className="commit-list"
+                style={{ "--graph-width": `${graph.width}px` } as CSSProperties}
+              >
+                <CommitGraph
+                  graph={graph}
+                  start={start}
+                  end={end}
+                  rowHeight={rowHeight}
+                />
+                <div className="commit-rows">
+                  <div style={{ height: start * rowHeight, flexShrink: 0 }} />
+                  {visible.slice(start, end).map((c) => (
+                    <CommitRow
+                      key={c.hash}
+                      commit={c}
+                      selected={selected?.hash === c.hash}
+                      githubRepo={githubRepo}
+                      onSelect={(commit) =>
+                        setSelected((old) =>
+                          old?.hash === commit.hash ? null : commit,
+                        )
+                      }
+                    />
+                  ))}
+                  <div
+                    style={{
+                      height: (visible.length - end) * rowHeight,
+                      flexShrink: 0,
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+            {hasMore && (
+              <div
+                ref={sentinelRef}
+                className="history-load-sentinel"
+                role="status"
+              >
+                {loading && (
+                  <LoaderCircle
+                    size={16}
+                    className="spin"
+                    aria-label={t("working")}
+                  />
+                )}
+                {pageError && (
+                  <button
+                    className="text-button"
+                    onClick={() => setPageError(false)}
+                  >
+                    {t("retry")}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="panel-footer">
+            <GitCommitHorizontal size={13} />
+            <span>
+              {commits.length} {t("commits")}
+            </span>
+            <span className="footer-spacer" />
+            <span>{t(currentOnly ? "currentBranch" : "allBranches")}</span>
+          </div>
+        </section>
+        {props.terminal}
+      </div>
+      <Splitter
+        orientation="vertical"
+        onResize={(delta) =>
+          setInspectorWidth((width) =>
+            Math.max(
+              260,
+              Math.min(
+                (layoutRef.current?.clientWidth ?? 1000) * 0.65,
+                width - delta,
+              ),
+            ),
+          )
+        }
+      />
+      <aside className="history-inspector" style={{ width: inspectorWidth }}>
+        {selected ? (
+          <section className="commit-details">
+            <div className="detail-tabs">
+              <button
+                className={detailTab === "details" ? "active" : ""}
+                onClick={() => {
+                  setDetailTab("details");
+                  setFile(null);
+                }}
+              >
+                {t("details")}
+              </button>
+              <button
+                className={detailTab === "files" ? "active" : ""}
+                onClick={() => setDetailTab("files")}
+              >
+                {t("files")} <span>{detail?.files.length ?? 0}</span>
+              </button>
+            </div>
+            {!selected ? (
+              <Empty title={t("noCommits")} />
+            ) : (
+              <div className="details-body">
+                <h2>{selected.message}</h2>
+                <div className="hash-line">
+                  <code>{selected.hash.slice(0, 7)}</code>
+                  <button
+                    className="icon-button"
+                    title={t("copyHash")}
+                    aria-label={t("copyHash")}
+                    onClick={() => {
+                      void navigator.clipboard
+                        .writeText(selected.hash)
+                        .then(() => {
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 1600);
+                        })
+                        .catch((e) => notify(String(e), true));
+                    }}
+                  >
+                    {copied ? <Check size={14} /> : <Copy size={14} />}
+                  </button>
+                </div>
+                <dl className="commit-properties">
+                  <dt>{t("author")}</dt>
+                  <dd>
+                    <Avatar
+                      name={selected.author}
+                      email={selected.email}
+                      githubRepo={githubRepo}
+                      hash={selected.hash}
+                    />
+                    {selected.author}
+                  </dd>
+                  {(
+                    detail?.message.match(/^Co-authored-by:\s*.+$/gim) ?? []
+                  ).map((line) => {
+                    const match =
+                      /^Co-authored-by:\s*(.+?)\s*<([^>]+)>\s*$/i.exec(line);
+                    return (
+                      match && (
+                        <dd key={match[2]} className="coauthor">
+                          <Avatar name={match[1]} email={match[2]} />
+                          {match[1]}
+                        </dd>
+                      )
+                    );
+                  })}
+                  <dt>{t("committed")}</dt>
+                  <dd
+                    title={new Date(selected.timestamp).toLocaleString(locale)}
+                  >
+                    {relativeTime(selected.timestamp, locale, t)}
+                  </dd>
+                </dl>
+                {detailError ? (
+                  <p className="inline-error">{detailError}</p>
+                ) : !detail ? (
+                  <LoaderCircle size={18} className="spin" />
+                ) : (
+                  <>
+                    {detailTab === "details" && (
+                      <>
+                        <p className="commit-message">
+                          {detail.message
+                            .split("\n")
+                            .slice(1)
+                            .join("\n")
+                            .trim() || selected.message}
+                        </p>
+                        <div className="detail-ref-list">
+                          {selected.refs.map((ref) => (
+                            <BranchBadge key={ref} name={ref} />
+                          ))}
+                        </div>
+                      </>
+                    )}
+                    <div className="section-label">
+                      {t("filesChanged")}
+                      <span className="count">{detail.files.length}</span>
+                    </div>
+                    <div className="changed-files">
+                      {detail.files.map((f) => (
+                        <button
+                          key={f.path}
+                          className={file === f.path ? "active" : ""}
+                          onClick={() => {
+                            setFile(f.path);
+                            setDetailTab("files");
+                          }}
+                        >
+                          <FileText size={15} />
+                          <span title={f.path}>{f.path}</span>
+                          <b className="addition">+{f.added}</b>
+                          <b className="deletion">−{f.deleted}</b>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="diff-stats">
+                      <span className="addition">
+                        +
+                        {detail.files.reduce(
+                          (sum, f) => sum + (Number(f.added) || 0),
+                          0,
+                        )}
+                      </span>
+                      <span className="deletion">
+                        −
+                        {detail.files.reduce(
+                          (sum, f) => sum + (Number(f.deleted) || 0),
+                          0,
+                        )}
+                      </span>
+                      <span>
+                        {detail.files.length} {t("files").toLowerCase()}
+                      </span>
+                    </div>
+                  </>
+                )}
+                <div className="parents">
+                  <span>{t("parents")}</span>
+                  {selected.parents.map((p) => (
+                    <button
+                      key={p}
+                      onClick={() => {
+                        const parent = commits.find((c) => c.hash === p);
+                        if (parent) setSelected(parent);
+                      }}
+                      disabled={!commits.some((c) => c.hash === p)}
+                    >
+                      <code>{p.slice(0, 7)}</code>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        ) : (
+          <section className="quick-commit">
+            <Changes
+              {...props}
+              onPreview={(path, staged, untracked) =>
+                setWorkingDiff({ path, staged, untracked })
+              }
+            />
+          </section>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function Diff({
+  repo,
+  path,
+  staged,
+  hash,
+  untracked = false,
+  compact = false,
+}: {
+  repo: Repository;
+  path: string;
+  staged: boolean;
+  hash?: string;
+  untracked?: boolean;
+  compact?: boolean;
+}) {
+  const { t } = useI18n();
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    gitService
+      .diff(repo, path, staged, hash, untracked)
+      .then((result) => {
+        if (!cancelled) setText(result);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repo, path, staged, hash, untracked]);
+  if (loading)
+    return (
+      <div className="diff-loading">
+        <LoaderCircle className="spin" size={20} />
+      </div>
+    );
+  if (error) return <p className="inline-error">{error}</p>;
+  if (!text) return <Empty icon={<FileCode2 />} title={t("noDiff")} />;
+  return (
+    <div className={`diff-view ${compact ? "compact" : ""}`}>
+      <pre>
+        {text.split("\n").map((line, i) => (
+          <div
+            key={i}
+            className={
+              line.startsWith("+")
+                ? "diff-add"
+                : line.startsWith("-")
+                  ? "diff-remove"
+                  : line.startsWith("@@")
+                    ? "diff-hunk"
+                    : ""
+            }
+          >
+            <span className="line-number">{i + 1}</span>
+            <span>{line || " "}</span>
+          </div>
+        ))}
+      </pre>
+    </div>
+  );
+}
+
+function Changes({
+  repo,
+  data,
+  busy,
+  onAction,
+  onPreview,
+}: RepoViewProps & {
+  onPreview?: (path: string, staged: boolean, untracked: boolean) => void;
+}) {
+  const { t } = useI18n();
+  const [selected, setSelected] = useState<{
+    file: FileChange;
+    staged: boolean;
+  } | null>(null);
+  const [summary, setSummary] = useState("");
+  const [description, setDescription] = useState("");
+  const staged = data.files.filter((f) => f.index !== " " && f.index !== "?");
+  const unstaged = data.files.filter(
+    (f) => f.worktree !== " " || f.index === "?",
+  );
+  useEffect(() => {
+    setSelected(null);
+  }, [data.files]);
+  function fileGroup(files: FileChange[], isStaged: boolean) {
+    return (
+      <section className="file-group">
+        <header>
+          <h3>
+            <ChevronDown size={13} />
+            {t(isStaged ? "staged" : "workingTree")}
+            <span className="count">{files.length}</span>
+          </h3>
+          <button
+            className="text-button"
+            disabled={busy || !files.length}
+            onClick={() =>
+              void onAction({
+                kind: isStaged ? "unstage" : "stage",
+                paths: files.flatMap((f) => [
+                  f.path,
+                  ...(f.originalPath ? [f.originalPath] : []),
+                ]),
+              })
+            }
+          >
+            {t(isStaged ? "unstageAll" : "stageAll")}
+          </button>
+        </header>
+        {files.map((f) => (
+          <div
+            key={f.path}
+            className={`file-row ${selected?.file.path === f.path && selected.staged === isStaged ? "selected" : ""}`}
+          >
+            <button
+              onClick={() => {
+                setSelected({ file: f, staged: isStaged });
+                onPreview?.(f.path, isStaged, f.index === "?");
+              }}
+            >
+              <span className={`file-status ${f.index === "?" ? "new" : ""}`}>
+                {f.index === "?" ? "U" : isStaged ? f.index : f.worktree}
+              </span>
+              <FileText size={14} />
+              <span>{f.path}</span>
+            </button>
+            <button
+              className="icon-button"
+              disabled={busy}
+              title={t(isStaged ? "unstage" : "stage")}
+              aria-label={`${t(isStaged ? "unstage" : "stage")} ${f.path}`}
+              onClick={() =>
+                void onAction({
+                  kind: isStaged ? "unstage" : "stage",
+                  paths: [f.path, ...(f.originalPath ? [f.originalPath] : [])],
+                })
+              }
+            >
+              {isStaged ? <Minus size={15} /> : <Plus size={15} />}
+            </button>
+          </div>
+        ))}
+      </section>
+    );
+  }
+  return (
+    <div className="changes-layout">
+      <div className="staging-panel">
+        <div className="staging-files">
+          {!data.files.length ? (
+            <Empty
+              icon={<Check size={26} />}
+              title={t("clean")}
+              description={t("cleanDescription")}
+            />
+          ) : (
+            <>
+              {fileGroup(unstaged, false)}
+              {fileGroup(staged, true)}
+            </>
+          )}
+        </div>
+        <form
+          className="commit-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void onAction({
+              kind: "commit",
+              value:
+                summary.trim() +
+                (description.trim() ? `\n\n${description.trim()}` : ""),
+            }).then((ok) => {
+              if (ok) {
+                setSummary("");
+                setDescription("");
+              }
+            });
+          }}
+        >
+          <div className="commit-on-branch">
+            <GitBranch size={14} />
+            <span>{data.branch}</span>
+          </div>
+          <input
+            aria-label={t("commitSummary")}
+            placeholder={t("commitSummary")}
+            value={summary}
+            onChange={(e) => setSummary(e.target.value)}
+            required
+          />
+          <textarea
+            aria-label={t("commitDescription")}
+            placeholder={t("commitDescription")}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+          />
+          <button
+            className="primary-button"
+            disabled={busy || !staged.length || !summary.trim()}
+          >
+            <GitCommitHorizontal size={16} />
+            {t("commit")}
+            <span className="count">{staged.length}</span>
+          </button>
+          <p>{t("commitHint")}</p>
+        </form>
+      </div>
+      <section className="file-diff-panel" hidden={Boolean(onPreview)}>
+        {selected ? (
+          <>
+            <header>
+              <FileCode2 size={16} />
+              <strong>{selected.file.path}</strong>
+              <span className="subtle">
+                {t(selected.staged ? "staged" : "workingTree")}
+              </span>
+            </header>
+            <Diff
+              key={`${selected.file.path}:${selected.staged}`}
+              repo={repo}
+              path={selected.file.path}
+              staged={selected.staged}
+              untracked={selected.file.index === "?"}
+            />
+          </>
+        ) : (
+          <Empty icon={<FileCode2 size={32} />} title={t("selectFile")} />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function RepositoryLists({
+  data,
+  tab,
+  busy,
+  onAction,
+  onPrompt,
+  onConfirm,
+}: RepoViewProps) {
+  const { t } = useI18n();
+  return (
+    <div className="repository-list-page">
+      <div className="page-title-row">
+        <div>
+          <span className="eyebrow">{t("repository")}</span>
+          <h1>{t(tab)}</h1>
+        </div>
+        <button
+          className="primary-button"
+          onClick={() => onPrompt(tab === "branches" ? "branch" : "remote")}
+        >
+          <Plus size={15} />
+          {t(tab === "branches" ? "newBranch" : "addRemote")}
+        </button>
+      </div>
+      {tab === "branches" ? (
+        [false, true].map((remote) => (
+          <section key={String(remote)} className="list-section">
+            <h3 className="section-label">
+              {t(remote ? "remoteBranches" : "localBranches")}
+              <span className="count">
+                {data.branches.filter((b) => b.remote === remote).length}
+              </span>
+            </h3>
+            <div className="surface-list">
+              {data.branches
+                .filter((b) => b.remote === remote)
+                .map((b) => (
+                  <div key={b.name} className="branch-list-row">
+                    <span className={`list-icon ${b.current ? "accent" : ""}`}>
+                      <GitBranch size={19} />
+                    </span>
+                    <div className="list-row-main">
+                      <strong>
+                        {b.name}
+                        {b.current && (
+                          <span className="branch-badge">{t("current")}</span>
+                        )}
+                      </strong>
+                      <span>{b.upstream || b.hash.slice(0, 7)}</span>
+                    </div>
+                    {!remote && !b.current && (
+                      <div className="row-actions">
+                        <button
+                          className="secondary-button"
+                          disabled={busy}
+                          onClick={() =>
+                            void onAction({
+                              kind: "switchBranch",
+                              value: b.name,
+                            })
+                          }
+                        >
+                          {t("switchBranch")}
+                        </button>
+                        <button
+                          className="icon-button"
+                          disabled={busy}
+                          title={t("merge")}
+                          aria-label={`${t("merge")} ${b.name}`}
+                          onClick={() =>
+                            onConfirm("mergeWarning", {
+                              kind: "merge",
+                              value: b.name,
+                            })
+                          }
+                        >
+                          <GitMerge size={16} />
+                        </button>
+                        <button
+                          className="icon-button danger-hover"
+                          disabled={busy}
+                          title={t("deleteBranch")}
+                          aria-label={`${t("deleteBranch")} ${b.name}`}
+                          onClick={() =>
+                            onConfirm("deleteBranchWarning", {
+                              kind: "deleteBranch",
+                              value: b.name,
+                            })
+                          }
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              {!data.branches.some((b) => b.remote === remote) && (
+                <div className="list-empty">{t("noBranches")}</div>
+              )}
+            </div>
+          </section>
+        ))
+      ) : (
+        <div className="surface-list">
+          {data.remotes.length ? (
+            data.remotes.map((r) => (
+              <div className="remote-list-row" key={r.name}>
+                <span className="list-icon accent">
+                  <Globe2 size={21} />
+                </span>
+                <div className="list-row-main">
+                  <strong>{r.name}</strong>
+                  <code>{r.url}</code>
+                </div>
+                <button
+                  className="icon-button danger-hover"
+                  aria-label={`${t("remove")} ${r.name}`}
+                  disabled={busy}
+                  onClick={() =>
+                    onConfirm("removeRemoteWarning", {
+                      kind: "removeRemote",
+                      value: r.name,
+                    })
+                  }
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))
+          ) : (
+            <Empty
+              icon={<Globe2 size={28} />}
+              title={t("noRemotes")}
+              description={t("noRemotesDescription")}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function RepoActions({
+  busy,
+  onAction,
+  onRefresh,
+}: {
+  busy: boolean;
+  onAction: (action: Action) => Promise<boolean>;
+  onRefresh: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="repo-actions">
+      <button
+        className="icon-button"
+        disabled={busy}
+        title={t("refresh")}
+        aria-label={t("refresh")}
+        onClick={onRefresh}
+      >
+        <RefreshCw size={15} className={busy ? "spin" : ""} />
+      </button>
+      <span className="toolbar-divider" />
+      <button disabled={busy} onClick={() => void onAction({ kind: "fetch" })}>
+        <RefreshCw size={14} />
+        {t("fetch")}
+      </button>
+      <button disabled={busy} onClick={() => void onAction({ kind: "pull" })}>
+        <ArrowDown size={15} />
+        {t("pull")}
+      </button>
+      <button disabled={busy} onClick={() => void onAction({ kind: "push" })}>
+        <ArrowUp size={15} />
+        {t("push")}
+      </button>
+    </div>
+  );
+}
+
+function BranchSwitcher({ data, busy, onAction }: RepoViewProps) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
+  const branches = data.branches.filter(
+    (b) => !b.remote && b.name.toLowerCase().includes(query.toLowerCase()),
+  );
+  return (
+    <div
+      className="branch-switcher"
+      ref={ref}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") setOpen(false);
+      }}
+    >
+      <button
+        className="branch-selector"
+        aria-expanded={open}
+        disabled={busy}
+        onClick={() => {
+          setQuery("");
+          setOpen(!open);
+        }}
+      >
+        <GitBranch size={14} />
+        {data.branch}
+        <ChevronDown size={13} />
+      </button>
+      {open && (
+        <div className="branch-menu">
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("searchBranches")}
+            aria-label={t("searchBranches")}
+          />
+          <div>
+            {branches.map((b) => (
+              <button
+                key={b.name}
+                disabled={busy || b.current}
+                onClick={() => {
+                  void onAction({ kind: "switchBranch", value: b.name }).then(
+                    (ok) => {
+                      if (ok) setOpen(false);
+                    },
+                  );
+                }}
+              >
+                <GitBranch size={14} />
+                <span>{b.name}</span>
+                {b.current && <Check size={14} />}
+              </button>
+            ))}
+            {!branches.length && <p>{t("noResults")}</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
