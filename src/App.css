@@ -3316,6 +3316,30 @@ textarea,
   flex-shrink: 0;
 }
 
+.open-repository-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+.open-repository-row .sidebar-repo {
+  width: 100%;
+  min-width: 0;
+  padding-right: 30px;
+}
+.open-repository-row .close-repository {
+  position: absolute;
+  right: 3px;
+  width: 24px;
+  height: 24px;
+  color: var(--muted);
+  opacity: 0;
+}
+.open-repository-row:hover .close-repository,
+.open-repository-row:focus-within .close-repository,
+.open-repository-row.active .close-repository {
+  opacity: 1;
+}
 .sidebar .workspace-switcher::-webkit-scrollbar {
   width: 6px;
   height: 6px;

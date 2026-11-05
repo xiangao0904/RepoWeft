@@ -1,10 +1,10 @@
 import { AccountSettings } from "./Accounts";
 import { useEffect, useState } from "react";
 import {
+  X,
   ArrowDownToLine,
   ArrowRight,
   Check,
-  ChevronRight,
   FolderGit2,
   Globe2,
   Heart,
@@ -563,26 +563,41 @@ export function SidebarRepo({
   repo,
   active,
   onClick,
+  onClose,
+  closeDisabled,
 }: {
   repo: Repository;
   active: boolean;
   onClick: () => void;
+  onClose: () => void;
+  closeDisabled: boolean;
 }) {
+  const { t } = useI18n();
+  const location =
+    repo.location.kind === "ssh" ? repo.location.host.name : repo.location.path;
   return (
-    <button
-      className={`sidebar-repo ${active ? "active" : ""}`}
-      onClick={onClick}
-    >
-      <FolderGit2 size={16} />
-      <span>
-        <strong>{repo.name}</strong>
-        <small>
-          {repo.location.kind === "ssh"
-            ? repo.location.host.name
-            : repo.location.path}
-        </small>
-      </span>
-      <ChevronRight size={13} />
-    </button>
+    <div className={`open-repository-row ${active ? "active" : ""}`}>
+      <button
+        className={`sidebar-repo ${active ? "active" : ""}`}
+        onClick={onClick}
+        title={`${repo.name} — ${location}`}
+        aria-current={active ? "page" : undefined}
+      >
+        <FolderGit2 size={16} />
+        <span>
+          <strong>{repo.name}</strong>
+          <small>{location}</small>
+        </span>
+      </button>
+      <button
+        className="icon-button close-repository"
+        onClick={onClose}
+        disabled={closeDisabled}
+        aria-label={`${t("closeRepository")} ${repo.name}`}
+        title={t("closeRepository")}
+      >
+        <X size={13} />
+      </button>
+    </div>
   );
 }

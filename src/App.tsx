@@ -88,6 +88,10 @@ export default function App() {
     "repositories",
     [],
   );
+  const [openRepositories, setOpenRepositories] = useStored<Repository[]>(
+    "openRepositories",
+    [],
+  );
   const [hosts, setHosts] = useStored<SSHHost[]>("hosts", []);
   const [page, setPage] = useState<Page>("home");
   const [repo, setRepo] = useState<Repository | null>(null);
@@ -202,6 +206,12 @@ export default function App() {
         favorite: existing?.favorite ?? next.favorite,
         lastOpened: Date.now(),
       };
+      setOpenRepositories((items) => {
+        const index = items.findIndex((item) => item.id === updated.id);
+        return index < 0
+          ? [...items, updated]
+          : items.map((item, i) => (i === index ? updated : item));
+      });
       setRepo(updated);
       setData(snapshot);
       setPage("repository");
@@ -221,6 +231,22 @@ export default function App() {
       if (request.current === id) setBusy(false);
     }
   }
+  function closeRepository(id: string) {
+    if (busy || operationLock.current) return;
+    const index = openRepositories.findIndex((item) => item.id === id);
+    const remaining = openRepositories.filter((item) => item.id !== id);
+    setOpenRepositories(remaining);
+    if (repo?.id !== id) return;
+    ++request.current;
+    setRepo(null);
+    setData(null);
+    setTerminalOpen(false);
+    setPage("home");
+    if (page === "repository" && remaining.length) {
+      void openRepo(remaining[Math.min(index, remaining.length - 1)]);
+    }
+  }
+
   async function refresh() {
     if (!repo || operationLock.current) return;
     const id = ++request.current;
@@ -467,7 +493,7 @@ export default function App() {
               )}
               <div className="sidebar-section workspace-switcher">
                 <div className="sidebar-section-title">
-                  <span>{t("workspaces")}</span>
+                  <span>{t("openRepositories")}</span>
                   <button
                     className="icon-button"
                     title={t("open")}
@@ -477,17 +503,19 @@ export default function App() {
                     <Plus size={14} />
                   </button>
                 </div>
-                {repositories.map((r) => (
+                {openRepositories.map((r) => (
                   <SidebarRepo
                     key={r.id}
                     repo={r}
                     active={Boolean(isRepo && repo.id === r.id)}
+                    closeDisabled={busy}
+                    onClose={() => closeRepository(r.id)}
                     onClick={() => {
                       void openRepo(r);
                     }}
                   />
                 ))}
-                {!repositories.length && (
+                {!openRepositories.length && (
                   <button
                     className="sidebar-empty-action"
                     onClick={() => setDialog({ type: "open" })}
