@@ -58,6 +58,9 @@ fn config() -> Result<Config, String> {
     }
     Ok(Config { client_id, slug })
 }
+pub(crate) fn app_slug() -> Result<String, String> {
+    config().map(|c| c.slug)
+}
 #[tauri::command]
 pub fn github_oauth_configuration() -> Configuration {
     match config() {

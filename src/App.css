@@ -3448,3 +3448,37 @@ textarea,
   background: var(--surface);
   color: var(--red);
 }
+
+.access-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 70vh;
+  overflow: auto;
+}
+.access-dialog select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: inherit;
+}
+.access-dialog p {
+  font-size: 12px;
+  line-height: 1.7;
+}
+.access-report {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  font-size: 12px;
+}
+.access-report dt {
+  color: var(--muted);
+}
+.access-report dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

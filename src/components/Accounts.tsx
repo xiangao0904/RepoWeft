@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { ChevronDown, LoaderCircle, Plus } from "lucide-react";
-import { desktop } from "../services/git";
+import { desktop, gitService } from "../services/git";
 import { errorText, useI18n } from "../lib/i18n";
 import { useStored } from "../lib/storage";
 import type { Repository } from "../types";
@@ -450,6 +450,7 @@ export function AccountSettings() {
 export function RepositoryAccount({ repo }: { repo: Repository }) {
   const { state } = useContext(Context);
   const { t } = useI18n();
+  const [checkVisible, setCheckVisible] = useState(false);
   const [binding, setBinding] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
@@ -491,6 +492,15 @@ export function RepositoryAccount({ repo }: { repo: Repository }) {
   }
   return (
     <div className="repository-account">
+      {checkVisible && (
+        <RepositoryAccessDialog
+          repo={repo}
+          onClose={() => setCheckVisible(false)}
+        />
+      )}
+      <button className="text-button" onClick={() => setCheckVisible(true)}>
+        {t("checkPushAccess")}
+      </button>
       <label>
         <GitHubMark />
         <select
@@ -520,5 +530,107 @@ export function RepositoryAccount({ repo }: { repo: Repository }) {
         </p>
       )}
     </div>
+  );
+}
+
+type RepositoryAccess = {
+  repository: string;
+  login: string;
+  method: string;
+  status: number;
+  userCanPush: boolean | null;
+  contentsPermission: string | null;
+  installationFound: boolean | null;
+};
+function RepositoryAccessDialog({
+  repo,
+  onClose,
+}: {
+  repo: Repository;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const remotes = gitService.cachedSnapshot(repo)?.remotes ?? [];
+  const [remote, setRemote] = useState(remotes[0]?.name ?? "");
+  const [report, setReport] = useState<RepositoryAccess | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const flag = (value: boolean | null) =>
+    t(value === null ? "accessUnknown" : value ? "accessYes" : "accessNo");
+  return (
+    <Modal
+      title={t("checkPushAccess")}
+      onClose={() => {
+        if (!busy) onClose();
+      }}
+    >
+      <div className="modal-content access-dialog">
+        <label>
+          {t("remotes")}
+          <select
+            value={remote}
+            disabled={busy}
+            onChange={(e) => {
+              setRemote(e.target.value);
+              setReport(null);
+            }}
+          >
+            {remotes.map((r) => (
+              <option key={r.name} value={r.name}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="primary-button"
+          disabled={busy || !remote}
+          onClick={() => {
+            setBusy(true);
+            setError("");
+            setReport(null);
+            void invoke<RepositoryAccess>("account_repository_access", {
+              path: repo.location.path,
+              remote,
+            })
+              .then(setReport)
+              .catch((e) => setError(errorText(e, t)))
+              .finally(() => setBusy(false));
+          }}
+        >
+          {t(busy ? "working" : "checkPushAccess")}
+        </button>
+        {error && (
+          <p className="inline-error" role="alert">
+            {error}
+          </p>
+        )}
+        {report && (
+          <dl className="access-report">
+            <dt>{t("accessAccount")}</dt>
+            <dd>
+              {report.login} ·{" "}
+              {t(report.method === "oauth" ? "accountOAuth" : "accountPat")}
+            </dd>
+            <dt>{t("accessRepository")}</dt>
+            <dd>{report.repository}</dd>
+            <dt>{t("accessHttpStatus")}</dt>
+            <dd>{report.status}</dd>
+            <dt>{t("accessUserPush")}</dt>
+            <dd>{flag(report.userCanPush)}</dd>
+            {report.method === "oauth" && (
+              <>
+                <dt>{t("accessContents")}</dt>
+                <dd>{report.contentsPermission ?? t("accessUnknown")}</dd>
+                <dt>{t("accessInstallation")}</dt>
+                <dd>{flag(report.installationFound)}</dd>
+              </>
+            )}
+          </dl>
+        )}
+        <p>{t("permissionDeniedHint")}</p>
+        <p>{t("accessCaveat")}</p>
+      </div>
+    </Modal>
   );
 }

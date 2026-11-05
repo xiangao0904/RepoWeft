@@ -388,6 +388,133 @@ fn authentication_rejected(error: &str) -> bool {
         || error.contains("could not read username")
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryAccess {
+    repository: String,
+    login: String,
+    method: String,
+    status: u16,
+    user_can_push: Option<bool>,
+    contents_permission: Option<String>,
+    installation_found: Option<bool>,
+}
+fn github_repository(raw: &str) -> Option<String> {
+    let normalized = raw
+        .strip_prefix("git@github.com:")
+        .map(|s| format!("https://github.com/{s}"))
+        .unwrap_or_else(|| raw.to_owned());
+    let url = reqwest::Url::parse(&normalized).ok()?;
+    if url.host_str() != Some("github.com") || !matches!(url.scheme(), "https" | "ssh") {
+        return None;
+    }
+    let path = url.path().trim_matches('/').trim_end_matches(".git");
+    let parts: Vec<_> = path.split('/').collect();
+    if parts.len() != 2
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
+        })
+    {
+        return None;
+    }
+    Some(path.into())
+}
+#[tauri::command]
+pub async fn account_repository_access(
+    path: String,
+    remote: String,
+) -> Result<RepositoryAccess, String> {
+    blocking(move || {
+        if remote.is_empty() || remote.starts_with('-') {
+            return Err("ACCOUNT_REMOTE_REQUIRED".into());
+        }
+        let mut url_command = Command::new("git");
+        url_command.args(["-C", &path, "remote", "get-url", "--push", &remote]);
+        let url = crate::git::output(url_command, 10)?;
+        let repository = github_repository(url.trim()).ok_or("ACCOUNT_GITHUB_ONLY")?;
+        let mut credentials = Command::new("git");
+        let id = configure(&mut credentials, Some(&path))?.ok_or("ACCOUNT_SYSTEM_CHECK")?;
+        let token = credentials
+            .get_envs()
+            .find(|(key, _)| *key == "REPOWEFT_GIT_TOKEN")
+            .and_then(|(_, value)| value)
+            .ok_or("ACCOUNT_REAUTHORIZE")?
+            .to_string_lossy()
+            .into_owned();
+        let account = read()?
+            .accounts
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or("ACCOUNT_NOT_FOUND")?;
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| "ACCOUNT_NETWORK_FAILED")?;
+        let get = |url: &str| {
+            client
+                .get(url)
+                .header("User-Agent", "RepoWeft")
+                .header("Accept", "application/vnd.github+json")
+                .bearer_auth(&token)
+                .send()
+                .map_err(|_| "ACCOUNT_NETWORK_FAILED".to_string())
+        };
+        let response = get(&format!("https://api.github.com/repos/{repository}"))?;
+        let status = response.status().as_u16();
+        let data: serde_json::Value = response.json().map_err(|_| "ACCOUNT_NETWORK_FAILED")?;
+        let mut result = RepositoryAccess {
+            repository: repository.clone(),
+            login: account.login,
+            method: account.method.clone(),
+            status,
+            user_can_push: data.pointer("/permissions/push").and_then(|v| v.as_bool()),
+            contents_permission: None,
+            installation_found: None,
+        };
+        if account.method == "oauth" {
+            let slug = crate::oauth::app_slug()?;
+            let owner = repository.split('/').next().unwrap_or("");
+            for page in 1..=10 {
+                let response = get(&format!(
+                    "https://api.github.com/user/installations?per_page=100&page={page}"
+                ))?;
+                if !response.status().is_success() {
+                    break;
+                }
+                let data: serde_json::Value =
+                    response.json().map_err(|_| "ACCOUNT_NETWORK_FAILED")?;
+                let installations = data["installations"]
+                    .as_array()
+                    .ok_or("ACCOUNT_NETWORK_FAILED")?;
+                let installation = installations.iter().find(|v| {
+                    v["app_slug"].as_str() == Some(slug.as_str())
+                        && v.pointer("/account/login")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|login| login.eq_ignore_ascii_case(owner))
+                });
+                if let Some(installation) = installation {
+                    result.installation_found = Some(true);
+                    result.contents_permission = installation
+                        .pointer("/permissions/contents")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned);
+                    break;
+                }
+                if installations.len() < 100 {
+                    result.installation_found = Some(false);
+                    break;
+                }
+            }
+        }
+        Ok(result)
+    })
+    .await
+}
+
 pub(crate) fn github_url(raw: &str) -> bool {
     if raw.starts_with("git@github.com:") {
         return true;
@@ -435,6 +562,28 @@ fn selected_account<'a>(
 #[cfg(test)]
 mod account_tests {
     use super::*;
+    #[test]
+    fn access_checks_only_build_api_paths_for_github_repositories() {
+        for url in [
+            "git@github.com:owner/repo.git",
+            "https://github.com/owner/repo.git",
+            "ssh://git@github.com/owner/repo.git",
+        ] {
+            assert_eq!(github_repository(url).as_deref(), Some("owner/repo"));
+        }
+        for url in [
+            "https://github.com.attacker.test/owner/repo",
+            "https://attacker.test/owner/repo",
+            "https://github.com/owner/repo/extra",
+            "https://github.com/owner/%2Frepo",
+            "file:///owner/repo",
+        ] {
+            assert!(github_repository(url).is_none());
+        }
+        assert!(!authentication_rejected(
+            "Permission to owner/repo denied. The requested URL returned error: 403"
+        ));
+    }
     #[test]
     fn legacy_pat_registry_migrates_without_changing_account_ids() {
         let state: Accounts =

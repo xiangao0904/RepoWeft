@@ -48,6 +48,7 @@ pub fn run() {
             oauth::github_oauth_login,
             oauth::github_oauth_cancel,
             accounts::account_repository_get,
+            accounts::account_repository_access,
             accounts::account_repository_set,
             accounts::account_use_pat,
             accounts::accounts_list,

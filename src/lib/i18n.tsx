@@ -1,6 +1,24 @@
 import { createContext, useContext } from "react";
 
 export const en = {
+  checkPushAccess: "Check push access",
+  accessAccount: "Credentials used",
+  accessRepository: "Push repository",
+  accessHttpStatus: "Repository API status",
+  accessUserPush: "Account repository write permission",
+  accessContents: "GitHub App Contents permission",
+  accessInstallation: "GitHub App installed for this owner",
+  accessUnknown: "Could not determine",
+  accessYes: "Granted",
+  accessNo: "Not granted",
+  accessCaveat:
+    "This read-only check does not push anything. Repository API access and account ownership alone do not prove that Git writes are permitted. Branch rules, selected installation repositories, SSO, and workflow permissions can still restrict a push.",
+  accountRemoteRequired: "Choose a Git remote to check.",
+  accountGithubOnly: "This check supports GitHub.com remotes.",
+  accountSystemCheck:
+    "This repository uses system credentials. Check your system Git credential manager or SSH key; RepoWeft does not read those secrets.",
+  permissionDeniedHint:
+    "GitHub recognized the account but refused this write. Repository ownership does not grant the app write access: check GitHub App Contents read/write permission and repository installation access, or use a PAT with Contents read/write. Check branch protection and workflow permissions if applicable. You can select System Git / SSH in the repository account menu to use your existing credentials.",
   oauthRetrying:
     "Connection interrupted. Retrying while your code is valid\u2026",
   oauthLoadingProfile: "Authorized. Loading your GitHub account\u2026",
@@ -336,6 +354,24 @@ export const en = {
 export type MessageKey = keyof typeof en;
 export type Locale = "en" | "zh-CN";
 export const zh: Record<MessageKey, string> = {
+  checkPushAccess: "检查推送权限",
+  accessAccount: "本次使用的凭据",
+  accessRepository: "推送目标仓库",
+  accessHttpStatus: "仓库 API 状态",
+  accessUserPush: "账号的仓库写入权限",
+  accessContents: "GitHub App Contents 权限",
+  accessInstallation: "该仓库所有者已安装 GitHub App",
+  accessUnknown: "暂时无法确定",
+  accessYes: "已授权",
+  accessNo: "未授权",
+  accessCaveat:
+    "此检查只读取权限信息，不会推送。仓库 API 可访问和账号拥有仓库，都不能单独证明 Git 写入已获授权。分支规则、安装时选定的仓库、SSO 和 workflow 权限仍可能限制推送。",
+  accountRemoteRequired: "请选择要检查的 Git 远程。",
+  accountGithubOnly: "此检查适用于 GitHub.com 远程。",
+  accountSystemCheck:
+    "此仓库正在使用系统凭据。请检查系统 Git 凭据管理器或 SSH 密钥，RepoWeft 不会读取这些密钥。",
+  permissionDeniedHint:
+    "GitHub 已识别账号，但拒绝了这次写入。仓库属于你，也需要为应用授权：请检查 GitHub App 的 Contents 读写权限和仓库安装范围，或使用具备 Contents 读写权限的 PAT。还需按情况检查分支保护和 workflow 权限。可在仓库账号菜单中选择 System Git / SSH，使用已有凭据。",
   oauthRetrying: "连接暂时中断，正在短码有效期内重试…",
   oauthLoadingProfile: "授权成功，正在读取 GitHub 账号…",
   oauthPollTimeout:
@@ -665,6 +701,12 @@ export function errorText(
     case "DIFF_SESSION_EXISTS":
     case "DIFF_INVALID_SESSION":
       return t("diffLoadFailed");
+    case "ACCOUNT_REMOTE_REQUIRED":
+      return t("accountRemoteRequired");
+    case "ACCOUNT_GITHUB_ONLY":
+      return t("accountGithubOnly");
+    case "ACCOUNT_SYSTEM_CHECK":
+      return t("accountSystemCheck");
     case "ACCOUNT_CREDENTIAL_CHANGED":
       return t("accountCredentialChanged");
     case "ACCOUNT_REAUTHORIZE":
@@ -731,7 +773,7 @@ export function errorText(
       if (
         /repository not found|requested URL returned error: 403/i.test(message)
       )
-        return `${message}\n${t("accountRepoAccess")}`;
+        return `${message}\n${t(/403|permission.*denied/i.test(message) ? "permissionDeniedHint" : "accountRepoAccess")}`;
       return message;
   }
 }
