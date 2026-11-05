@@ -44,11 +44,18 @@ import type {
 } from "../types";
 import { relativeTime, useI18n, errorText, type MessageKey } from "../lib/i18n";
 import { gitService } from "../services/git";
-import { Avatar, Splitter, BranchBadge, Empty } from "./ui";
+import { Avatar, Splitter, BranchBadge, Empty, Modal } from "./ui";
 import { CommitGraph } from "./CommitGraph";
 import { githubRepository } from "../lib/avatars";
 import { layoutGraph } from "../lib/graph";
 
+import {
+  CommitActions,
+  ConflictEditor,
+  OperationStatus,
+  WorkspaceTools,
+  conflicted,
+} from "./GitTools";
 import { useStored } from "../lib/storage";
 
 export type RepoTab = "history" | "changes" | "branches" | "remotes";
@@ -80,12 +87,42 @@ export function RepositoryView(props: RepoViewProps) {
   );
 }
 
+function RepositorySync({ data }: { data: Snapshot }) {
+  const { t } = useI18n();
+  const branch = data.branches.find((b) => b.current);
+  const upstream = data.branches.find(
+    (b) => b.remote && b.name === branch?.upstream,
+  );
+  return (
+    <div className="ref-legend">
+      <span className="ref-local">
+        {t("localRef")}: {data.branch} <code>{branch?.hash.slice(0, 7)}</code>
+      </span>
+      <span className="ref-remote">
+        {t("remoteRef")}: {branch?.upstream || t("noUpstream")}{" "}
+        <code>{upstream?.hash.slice(0, 7)}</code>
+      </span>
+      {data.tracking && (
+        <strong>
+          {data.tracking.ahead} {t("aheadCommits")} · {data.tracking.behind}{" "}
+          {t("behindCommits")}
+        </strong>
+      )}
+      <small>{t("refLegend")}</small>
+    </div>
+  );
+}
+
 const CommitRow = memo(function CommitRow({
   commit: c,
   selected,
   githubRepo,
   onSelect,
+  onContext,
+  remoteNames,
 }: {
+  onContext: (commit: Commit) => void;
+  remoteNames: string[];
   commit: Commit;
   selected: boolean;
   githubRepo: string | null;
@@ -96,11 +133,22 @@ const CommitRow = memo(function CommitRow({
     <button
       className={`commit-row ${selected ? "selected" : ""}`}
       onClick={() => onSelect(c)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContext(c);
+      }}
     >
       <div className="commit-row-title">
         <strong>{c.message}</strong>
-        {c.refs.slice(0, 2).map((ref) => (
-          <BranchBadge key={ref} name={ref} />
+        {c.refs.map((ref) => (
+          <BranchBadge
+            key={ref}
+            name={ref}
+            remote={
+              ref.startsWith("refs/remotes/") ||
+              remoteNames.some((name) => ref.startsWith(`${name}/`))
+            }
+          />
         ))}
       </div>
       <div className="commit-meta">
@@ -123,6 +171,22 @@ const CommitRow = memo(function CommitRow({
 function History(props: RepoViewProps) {
   const { repo, data, notify } = props;
   const { t, locale } = useI18n();
+  const [actionCommit, setActionCommit] = useState<Commit | null>(null);
+  const openActions = useCallback(
+    (commit: Commit) => {
+      void gitService
+        .detail(repo, commit.hash)
+        .then((detail) =>
+          setActionCommit({ ...commit, message: detail.message }),
+        )
+        .catch((error) => notify(errorText(error, t), true));
+    },
+    [repo, notify, t],
+  );
+  const remoteNames = useMemo(
+    () => data.remotes.map((r) => r.name),
+    [data.remotes],
+  );
   const [commits, setCommits] = useState(data.commits);
   const [selected, setSelected] = useState<Commit | null>(null);
   const [query, setQuery] = useState("");
@@ -334,23 +398,47 @@ function History(props: RepoViewProps) {
       className="history-layout density-compact"
       style={{ "--commit-height": `${rowHeight}px` } as CSSProperties}
     >
+      {actionCommit && (
+        <CommitActions
+          commit={actionCommit}
+          busy={props.busy}
+          onAction={props.onAction}
+          onClose={() => setActionCommit(null)}
+        />
+      )}
       <div className="repository-center-column">
-        {!selected && workingDiff && (
-          <section className="history-main-diff file-diff-panel">
-            <header>
-              <strong>{workingDiff.path}</strong>
-              <button
-                className="icon-button diff-close"
-                title={t("close")}
-                aria-label={t("close")}
-                onClick={() => setWorkingDiff(null)}
-              >
-                <X size={16} />
-              </button>
-            </header>
-            <Diff repo={repo} {...workingDiff} />
-          </section>
-        )}
+        <OperationStatus {...props} />
+        <WorkspaceTools {...props} />
+        <RepositorySync data={data} />
+        {!selected &&
+          workingDiff &&
+          (data.files.some(
+            (f) => f.path === workingDiff.path && conflicted(f),
+          ) ? (
+            <ConflictEditor
+              key={workingDiff.path}
+              repo={repo}
+              path={workingDiff.path}
+              busy={props.busy}
+              onAction={props.onAction}
+              onClose={() => setWorkingDiff(null)}
+            />
+          ) : (
+            <section className="history-main-diff file-diff-panel">
+              <header>
+                <strong>{workingDiff.path}</strong>
+                <button
+                  className="icon-button diff-close"
+                  title={t("close")}
+                  aria-label={t("close")}
+                  onClick={() => setWorkingDiff(null)}
+                >
+                  <X size={16} />
+                </button>
+              </header>
+              <Diff repo={repo} {...workingDiff} />
+            </section>
+          ))}
         {selected && file && (
           <section className="history-main-diff file-diff-panel">
             <header>
@@ -494,6 +582,8 @@ function History(props: RepoViewProps) {
                       selected={selected?.hash === c.hash}
                       githubRepo={githubRepo}
                       onSelect={selectCommit}
+                      onContext={openActions}
+                      remoteNames={remoteNames}
                     />
                   ))}
                   <div
@@ -579,6 +669,13 @@ function History(props: RepoViewProps) {
             ) : (
               <div className="details-body">
                 <h2>{selected.message}</h2>
+                <button
+                  className="secondary-button"
+                  disabled={props.busy}
+                  onClick={() => openActions(selected)}
+                >
+                  {t("commitActions")}
+                </button>
                 <div className="hash-line">
                   <code>{selected.hash.slice(0, 7)}</code>
                   <button
@@ -647,7 +744,13 @@ function History(props: RepoViewProps) {
                         </p>
                         <div className="detail-ref-list">
                           {selected.refs.map((ref) => (
-                            <BranchBadge key={ref} name={ref} />
+                            <BranchBadge
+                              key={ref}
+                              name={ref}
+                              remote={remoteNames.some((name) =>
+                                ref.startsWith(`${name}/`),
+                              )}
+                            />
                           ))}
                         </div>
                       </>
@@ -790,6 +893,8 @@ function Changes({
   busy,
   onAction,
   onExpandUntracked,
+  onConfirm,
+  notify,
   onPreview,
 }: RepoViewProps & {
   onPreview?: (path: string, staged: boolean, untracked: boolean) => void;
@@ -799,11 +904,36 @@ function Changes({
     file: FileChange;
     staged: boolean;
   } | null>(null);
+  const [conflictPath, setConflictPath] = useState<string | null>(null);
+  const [amend, setAmend] = useState(false);
+  const [allowEmpty, setAllowEmpty] = useState(false);
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
-  const staged = data.files.filter((f) => f.index !== " " && f.index !== "?");
+  const head =
+    data.branches.find((b) => b.current)?.hash ??
+    data.commits.find((c) => c.refs.includes("HEAD"))?.hash;
+  useEffect(() => {
+    if (!amend || !head) return;
+    const controller = new AbortController();
+    void gitService
+      .detail(repo, head, controller.signal)
+      .then((detail) => {
+        if (controller.signal.aborted) return;
+        const [title, ...body] = detail.message.split("\n");
+        setSummary(title);
+        setDescription(body.join("\n").trim());
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) notify(errorText(error, t), true);
+      });
+    return () => controller.abort();
+  }, [amend, head, repo, notify, t]);
+  const conflicts = data.files.filter(conflicted);
+  const staged = data.files.filter(
+    (f) => !conflicted(f) && f.index !== " " && f.index !== "?",
+  );
   const unstaged = data.files.filter(
-    (f) => f.worktree !== " " || f.index === "?",
+    (f) => !conflicted(f) && (f.worktree !== " " || f.index === "?"),
   );
   useEffect(() => {
     setSelected(null);
@@ -857,6 +987,23 @@ function Changes({
                 <FileText size={14} />
                 <span>{f.path}</span>
               </button>
+              {!isStaged && (
+                <button
+                  className="icon-button danger-hover"
+                  disabled={busy}
+                  title={t("discard")}
+                  aria-label={`${t("discard")} ${f.path}`}
+                  onClick={() =>
+                    onConfirm("discardWarning", {
+                      kind: "discard",
+                      paths: [f.path],
+                      extra: f.index === "?" ? "untracked" : undefined,
+                    })
+                  }
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
               <button
                 className="icon-button"
                 disabled={busy}
@@ -883,7 +1030,53 @@ function Changes({
   return (
     <div className="changes-layout">
       <div className="staging-panel">
+        {!onPreview && (
+          <OperationStatus
+            data={data}
+            busy={busy}
+            onAction={onAction}
+            onConfirm={onConfirm}
+          />
+        )}
         <div className="staging-files">
+          {!!conflicts.length && (
+            <section className="conflict-panel">
+              <h3>{t("conflicts")}</h3>
+              {conflicts.map((f) => (
+                <div key={f.path}>
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      setSelected({ file: f, staged: false });
+                      if (!onPreview) setConflictPath(f.path);
+                      onPreview?.(f.path, false, false);
+                    }}
+                  >
+                    {f.path}
+                  </button>
+                  <div className="conflict-choices">
+                    <button
+                      disabled={busy || !!repo.demo}
+                      onClick={() => {
+                        if (onPreview) onPreview(f.path, false, false);
+                        else setConflictPath(f.path);
+                      }}
+                    >
+                      {t("editConflict")}
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void onAction({ kind: "stage", paths: [f.path] })
+                      }
+                    >
+                      {t("stage")}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
           {!data.files.length ? (
             <Empty
               icon={<Check size={26} />}
@@ -912,12 +1105,26 @@ function Changes({
           className="commit-form"
           onSubmit={(e) => {
             e.preventDefault();
-            void onAction({
-              kind: "commit",
+            if (
+              busy ||
+              conflicts.length ||
+              !summary.trim() ||
+              (!staged.length && !allowEmpty && !amend)
+            )
+              return;
+            const action: Action = {
+              kind: amend ? "amend" : "commit",
+              allowEmpty,
               value:
                 summary.trim() +
                 (description.trim() ? `\n\n${description.trim()}` : ""),
-            }).then((ok) => {
+            };
+            if (amend) {
+              setAmend(false);
+              onConfirm("amendWarning", action);
+              return;
+            }
+            void onAction(action).then((ok) => {
               if (ok) {
                 setSummary("");
                 setDescription("");
@@ -943,19 +1150,50 @@ function Changes({
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
           />
+          <label className="empty-commit-option">
+            <input
+              type="checkbox"
+              checked={amend}
+              disabled={!!data.operation || !head}
+              onChange={(e) => setAmend(e.target.checked)}
+            />
+            {t("amend")}
+          </label>
+          <label className="empty-commit-option">
+            <input
+              type="checkbox"
+              checked={allowEmpty}
+              onChange={(e) => setAllowEmpty(e.target.checked)}
+            />
+            {t("allowEmpty")}
+          </label>
           <button
             className="primary-button"
-            disabled={busy || !staged.length || !summary.trim()}
+            disabled={
+              busy ||
+              (!staged.length && !allowEmpty && !amend) ||
+              !summary.trim() ||
+              !!conflicts.length
+            }
           >
             <GitCommitHorizontal size={16} />
-            {t("commit")}
+            {t(amend ? "amend" : "commit")}
             <span className="count">{staged.length}</span>
           </button>
           <p>{t("commitHint")}</p>
         </form>
       </div>
       <section className="file-diff-panel" hidden={Boolean(onPreview)}>
-        {selected && !onPreview ? (
+        {conflictPath && !onPreview ? (
+          <ConflictEditor
+            key={conflictPath}
+            repo={repo}
+            path={conflictPath}
+            busy={busy}
+            onAction={onAction}
+            onClose={() => setConflictPath(null)}
+          />
+        ) : selected && !onPreview ? (
           <>
             <header>
               <FileCode2 size={16} />
@@ -989,8 +1227,46 @@ function RepositoryLists({
   onConfirm,
 }: RepoViewProps) {
   const { t } = useI18n();
+  const [renameBranch, setRenameBranch] = useState<string | null>(null);
+  const [branchName, setBranchName] = useState("");
   return (
     <div className="repository-list-page">
+      {renameBranch && (
+        <Modal
+          title={t("renameBranch")}
+          onClose={() => {
+            if (!busy) setRenameBranch(null);
+          }}
+        >
+          <form
+            className="modal-content git-operation-dialog"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void onAction({
+                kind: "renameBranch",
+                value: renameBranch,
+                extra: branchName.trim(),
+              }).then((ok) => {
+                if (ok) setRenameBranch(null);
+              });
+            }}
+          >
+            <input
+              required
+              autoFocus
+              aria-label={t("branch")}
+              value={branchName}
+              onChange={(e) => setBranchName(e.target.value)}
+            />
+            <button
+              className="primary-button"
+              disabled={busy || !branchName.trim()}
+            >
+              {t("confirm")}
+            </button>
+          </form>
+        </Modal>
+      )}
       <div className="page-title-row">
         <div>
           <span className="eyebrow">{t("repository")}</span>
@@ -1031,6 +1307,29 @@ function RepositoryLists({
                       </strong>
                       <span>{b.upstream || b.hash.slice(0, 7)}</span>
                     </div>
+                    {!remote && (
+                      <button
+                        className="text-button"
+                        disabled={busy}
+                        onClick={() => {
+                          setRenameBranch(b.name);
+                          setBranchName(b.name);
+                        }}
+                      >
+                        {t("renameBranch")}
+                      </button>
+                    )}
+                    {remote && (
+                      <button
+                        className="secondary-button"
+                        disabled={busy}
+                        onClick={() =>
+                          void onAction({ kind: "trackBranch", value: b.name })
+                        }
+                      >
+                        {t("trackBranch")}
+                      </button>
+                    )}
                     {!remote && !b.current && (
                       <div className="row-actions">
                         <button
@@ -1132,10 +1431,12 @@ export function RepoActions({
   busy,
   onAction,
   onRefresh,
+  onConfirm,
 }: {
   busy: boolean;
   onAction: (action: Action) => Promise<boolean>;
   onRefresh: () => void;
+  onConfirm: (message: MessageKey, action: Action) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -1161,6 +1462,12 @@ export function RepoActions({
       <button disabled={busy} onClick={() => void onAction({ kind: "push" })}>
         <ArrowUp size={15} />
         {t("push")}
+      </button>
+      <button
+        disabled={busy}
+        onClick={() => onConfirm("forcePushWarning", { kind: "forcePush" })}
+      >
+        {t("forcePush")}
       </button>
     </div>
   );

@@ -683,6 +683,7 @@ export default function App() {
                     </div>
                     <RepositoryAccount key={repo.id} repo={repo} />
                     <RepoActions
+                      onConfirm={confirm}
                       busy={busy}
                       onAction={action}
                       onRefresh={() => void refresh()}

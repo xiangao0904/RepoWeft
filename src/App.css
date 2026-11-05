@@ -3448,6 +3448,302 @@ textarea,
   background: var(--surface);
   color: var(--red);
 }
+.branch-badge.ref-local,
+.ref-legend .ref-local {
+  color: #6240c4;
+  background: #eee8ff;
+  border: 1px solid #b6a0f0;
+}
+.branch-badge.ref-remote,
+.ref-legend .ref-remote {
+  color: #086b9a;
+  background: #dff3ff;
+  border: 1px dashed #499ac3;
+}
+.branch-badge.ref-tag {
+  color: #885b08;
+  background: #fff2cb;
+  border: 1px solid #d3af51;
+}
+.branch-badge b {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ref-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.ref-legend > span {
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.ref-legend small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.workspace-tools {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  max-height: 240px;
+  overflow: auto;
+  flex-shrink: 0;
+}
+.workspace-tools summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.workspace-tools button,
+.operation-banner button,
+.conflict-choices button {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 8px;
+  margin: 4px;
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+}
+.tool-entry {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.tool-entry code {
+  overflow-wrap: anywhere;
+  flex: 1;
+}
+.operation-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  padding: 10px;
+  background: color-mix(in srgb, #d3af51 10%, var(--surface));
+  color: var(--text);
+  border-left: 3px solid #d3af51;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.conflict-panel {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  margin: 0;
+}
+.conflict-panel p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.conflict-choices {
+  display: flex;
+  flex-wrap: wrap;
+}
+.empty-commit-option {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.commit-form .empty-commit-option input {
+  width: auto;
+}
+.git-operation-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 70vh;
+  overflow: auto;
+}
+.git-operation-dialog code {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.git-operation-dialog p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.git-operation-dialog textarea,
+.git-operation-dialog select {
+  width: 100%;
+  padding: 10px;
+  background: var(--surface);
+  color: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.commit-action-menu {
+  display: grid;
+  gap: 4px;
+}
+.commit-action-menu button {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.commit-action-menu button:hover {
+  background: var(--surface-hover);
+}
+.conflict-versions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.conflict-versions label {
+  min-width: 0;
+}
+.git-operation-dialog pre {
+  max-height: 180px;
+  overflow: auto;
+}
+.git-operation-dialog textarea {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+@media (max-width: 800px) {
+  .conflict-versions {
+    grid-template-columns: 1fr;
+  }
+}
+.inline-conflict-editor {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  overflow: auto;
+}
+.conflict-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.conflict-toolbar > div {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+  flex-direction: column;
+}
+.conflict-toolbar strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.conflict-inline-hint {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 10px 18px;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+.conflict-split {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-height: 280px;
+}
+.conflict-side {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.conflict-side + .conflict-side {
+  border-left: 1px solid var(--border);
+}
+.conflict-side > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+.conflict-side > header > div {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.conflict-side-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.conflict-side-theirs .conflict-side-dot {
+  background: var(--green);
+}
+.conflict-side .secondary-button {
+  font-size: 11px;
+  padding: 6px 10px;
+}
+.conflict-side textarea {
+  flex: 1;
+  width: 100%;
+  min-height: 220px;
+  resize: none;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  padding: 18px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre;
+}
+.conflict-side-ours textarea {
+  background: color-mix(in srgb, var(--accent) 3%, transparent);
+}
+.conflict-side-theirs textarea {
+  background: color-mix(in srgb, var(--green) 3%, transparent);
+}
+.conflict-manual {
+  border-top: 1px solid var(--border);
+  padding: 12px 18px;
+  flex-shrink: 0;
+}
+.conflict-manual summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 3px 0;
+}
+.conflict-manual textarea {
+  display: block;
+  width: 100%;
+  margin: 10px 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  white-space: pre;
+}
+.conflict-manual pre {
+  max-height: 160px;
+  overflow: auto;
+}
 
 .access-dialog {
   display: flex;

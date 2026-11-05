@@ -98,11 +98,27 @@ export function Modal({
     </div>
   );
 }
-export function BranchBadge({ name }: { name: string }) {
+export function BranchBadge({
+  name,
+  remote = false,
+}: {
+  name: string;
+  remote?: boolean;
+}) {
+  const { t } = useI18n();
+  const tag = name.startsWith("tag: ");
   return (
-    <span className="branch-badge">
+    <span
+      className={`branch-badge ref-${tag ? "tag" : remote ? "remote" : "local"}`}
+      title={t(tag ? "tagRef" : remote ? "remoteRef" : "localRef")}
+    >
       <GitBranch size={11} />
-      {name.replace("HEAD -> ", "")}
+      <b>{t(tag ? "tagRef" : remote ? "remoteRef" : "localRef")}</b>
+      {name
+        .replace("HEAD -> ", "")
+        .replace("refs/heads/", "")
+        .replace("refs/remotes/", "")
+        .replace("refs/tags/", "")}
     </span>
   );
 }

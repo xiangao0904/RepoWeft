@@ -7,6 +7,7 @@ import type {
   DirectoryEntry,
   Commit,
   CommitDetail,
+  ConflictVersions,
   DiffDocument,
   DiffPage,
   DiffSource,
@@ -162,6 +163,18 @@ function readCall<T>(
 
 // UI components depend on this service; transport and Git arguments stay here and in Rust.
 export const gitService = {
+  conflict(
+    repo: Repository,
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<ConflictVersions> {
+    return readCall(
+      repo,
+      "repository_conflict",
+      { location: repo.location, path },
+      signal,
+    );
+  },
   setAuthPrompt(prompt: AuthPrompt | null) {
     promptForAuth = prompt;
   },
@@ -219,6 +232,10 @@ export const gitService = {
         "commits",
         "branches",
         "remotes",
+        "tags",
+        "stashes",
+        "operation",
+        "tracking",
       ] as const) {
         if (!sections.includes(key))
           Object.assign(data, { [key]: previous[key] });
@@ -405,10 +422,12 @@ export const gitService = {
         ? ["files"]
         : action.kind === "addRemote" || action.kind === "removeRemote"
           ? ["remotes"]
-          : action.kind === "deleteBranch" || action.kind === "push"
-            ? ["branches"]
+          : action.kind === "deleteBranch" ||
+              action.kind === "push" ||
+              action.kind === "forcePush"
+            ? ["commits", "branches", "tracking"]
             : action.kind === "fetch"
-              ? ["commits", "branches"]
+              ? ["commits", "branches", "tracking", "tags"]
               : undefined;
     return gitService.snapshot(
       repo,

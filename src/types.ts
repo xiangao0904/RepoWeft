@@ -59,6 +59,10 @@ export interface Remote {
   url: string;
 }
 export interface Snapshot {
+  tracking?: { ahead: number; behind: number } | null;
+  tags?: string[];
+  stashes?: string[];
+  operation?: string | null;
   branch: string;
   commits: Commit[];
   files: FileChange[];
@@ -66,6 +70,32 @@ export interface Snapshot {
   remotes: Remote[];
 }
 export type GitAction =
+  | "publishBranch"
+  | "amend"
+  | "discard"
+  | "trackBranch"
+  | "renameBranch"
+  | "forcePush"
+  | "checkoutCommit"
+  | "reset"
+  | "revert"
+  | "cherryPick"
+  | "createTag"
+  | "deleteTag"
+  | "pushTag"
+  | "reword"
+  | "rebase"
+  | "continueOperation"
+  | "abortOperation"
+  | "skipOperation"
+  | "resolveOurs"
+  | "resolveTheirs"
+  | "resolveDelete"
+  | "resolveEdited"
+  | "stash"
+  | "stashApply"
+  | "stashPop"
+  | "stashDrop"
   | "stage"
   | "unstage"
   | "commit"
@@ -79,10 +109,16 @@ export type GitAction =
   | "addRemote"
   | "removeRemote";
 export interface Action {
+  allowEmpty?: boolean;
   kind: GitAction;
   paths?: string[];
   value?: string;
   extra?: string;
+}
+export interface ConflictVersions {
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
 }
 export interface CommitFile {
   path: string;

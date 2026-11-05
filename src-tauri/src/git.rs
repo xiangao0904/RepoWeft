@@ -47,11 +47,20 @@ pub struct Remote {
 }
 #[derive(Serialize, Default)]
 pub struct Snapshot {
+    tracking: Option<Tracking>,
     branch: String,
     commits: Vec<Commit>,
     files: Vec<FileChange>,
     branches: Vec<Branch>,
     remotes: Vec<Remote>,
+    tags: Vec<String>,
+    stashes: Vec<String>,
+    operation: Option<String>,
+}
+#[derive(Serialize)]
+pub struct Tracking {
+    ahead: usize,
+    behind: usize,
 }
 #[derive(Deserialize)]
 pub struct Action {
@@ -59,6 +68,8 @@ pub struct Action {
     paths: Option<Vec<String>>,
     value: Option<String>,
     extra: Option<String>,
+    #[serde(default, rename = "allowEmpty")]
+    allow_empty: bool,
 }
 #[derive(Serialize)]
 pub struct CommitFile {
@@ -88,9 +99,20 @@ fn valid_text(value: &str) -> Result<(), String> {
         Ok(())
     }
 }
-pub(crate) fn output(mut command: Command, timeout: u64) -> Result<String, String> {
+pub(crate) fn output(command: Command, timeout: u64) -> Result<String, String> {
+    output_with_input(command, timeout, None)
+}
+fn output_with_input(
+    mut command: Command,
+    timeout: u64,
+    input: Option<Vec<u8>>,
+) -> Result<String, String> {
     command
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(windows)]
@@ -106,6 +128,13 @@ pub(crate) fn output(mut command: Command, timeout: u64) -> Result<String, Strin
         .map_err(|e| format!("Unable to start Git/OpenSSH: {e}"))?;
     let stdout = child.stdout.take().ok_or("Missing stdout")?;
     let stderr = child.stderr.take().ok_or("Missing stderr")?;
+    let writer = input.map(|input| {
+        let mut stdin = child.stdin.take().expect("Piped stdin");
+        std::thread::spawn(move || {
+            use std::io::Write;
+            stdin.write_all(&input)
+        })
+    });
     // Drain both pipes concurrently. Keep bounded output while continuing to drain.
     fn drain(mut pipe: impl Read) -> (Vec<u8>, bool) {
         let mut result = Vec::new();
@@ -152,6 +181,12 @@ pub(crate) fn output(mut command: Command, timeout: u64) -> Result<String, Strin
     };
     let (stdout, overflow) = out.join().map_err(|_| "Output reader failed")?;
     let (stderr, _) = err.join().map_err(|_| "Error reader failed")?;
+    if let Some(writer) = writer {
+        writer
+            .join()
+            .map_err(|_| "Input writer failed")?
+            .map_err(|e| e.to_string())?;
+    }
     if !status.success() {
         return Err(String::from_utf8_lossy(&stderr).trim().to_string());
     }
@@ -180,6 +215,23 @@ fn git(location: &Location, args: &[&str]) -> Result<String, String> {
             } else {
                 None
             };
+            if args.contains(&"--")
+                && matches!(
+                    args.first(),
+                    Some(
+                        &"add"
+                            | &"rm"
+                            | &"checkout"
+                            | &"checkout-index"
+                            | &"ls-files"
+                            | &"reset"
+                            | &"clean"
+                            | &"restore"
+                    )
+                )
+            {
+                cmd.arg("--literal-pathspecs");
+            }
             cmd.args(["--no-pager", "-C", &location.path]).args(args);
             crate::accounts::network_output(cmd, 180, account_id.as_deref())
         }
@@ -188,12 +240,31 @@ fn git(location: &Location, args: &[&str]) -> Result<String, String> {
                 return Err("Remote path must be absolute".into());
             }
             let host = location.host.as_ref().ok_or("SSH host is missing")?;
+            let literal = if args.contains(&"--")
+                && matches!(
+                    args.first(),
+                    Some(
+                        &"add"
+                            | &"rm"
+                            | &"checkout"
+                            | &"checkout-index"
+                            | &"ls-files"
+                            | &"reset"
+                            | &"clean"
+                            | &"restore"
+                    )
+                ) {
+                "--literal-pathspecs"
+            } else {
+                ""
+            };
             let encoded = args.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ");
             ssh::exec(
                 host,
                 ssh::Mode::Session,
                 &format!(
-                    "GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 git --no-pager -C {} {}",
+                    "GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 git --no-pager {} -C {} {}",
+                    literal,
                     quote(&location.path),
                     encoded
                 ),
@@ -258,6 +329,7 @@ fn log(location: &Location, skip: usize, current_only: bool) -> Result<Vec<Commi
     let skip = skip.to_string();
     let mut args = vec![
         "log",
+        "--decorate=full",
         "--date-order",
         "--max-count",
         limit,
@@ -414,12 +486,125 @@ fn snapshot_sections(
         })
         .collect();
     Ok(Snapshot {
+        tracking: if wants("branches") {
+            git(
+                location,
+                &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+            )
+            .ok()
+            .and_then(|s| {
+                let mut counts = s.split_whitespace();
+                Some(Tracking {
+                    ahead: counts.next()?.parse().ok()?,
+                    behind: counts.next()?.parse().ok()?,
+                })
+            })
+        } else {
+            None
+        },
         branch,
         commits,
         files,
         branches,
         remotes,
+        tags: if wants("tags") {
+            git(location, &["tag", "--list"])?
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        } else {
+            Vec::new()
+        },
+        stashes: if wants("stashes") {
+            git(location, &["stash", "list", "--format=%gd: %s"])?
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        } else {
+            Vec::new()
+        },
+        operation: operation_state(location)?,
     })
+}
+fn operation_state(location: &Location) -> Result<Option<String>, String> {
+    for (file, operation) in [
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase"),
+        ("MERGE_HEAD", "merge"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
+    ] {
+        let path = git(
+            location,
+            &["rev-parse", "--path-format=absolute", "--git-path", file],
+        )?;
+        let exists = if location.kind == "local" {
+            std::path::Path::new(path.trim()).exists()
+        } else {
+            ssh::exec(
+                location.host.as_ref().ok_or("SSH host is missing")?,
+                ssh::Mode::Session,
+                &format!("test -e {}", quote(path.trim())),
+                15,
+            )
+            .is_ok()
+        };
+        if exists {
+            return Ok(Some(operation.into()));
+        }
+    }
+    Ok(None)
+}
+#[derive(Serialize)]
+pub struct ConflictVersions {
+    base: Option<String>,
+    ours: Option<String>,
+    theirs: Option<String>,
+}
+#[tauri::command]
+pub async fn repository_conflict(
+    location: Location,
+    path: String,
+    request_id: Option<String>,
+) -> Result<ConflictVersions, String> {
+    crate::tasks::read(request_id, move || {
+        valid_text(&path)?;
+        let entries = git(&location, &["ls-files", "--unmerged", "--", &path])?;
+        if entries.is_empty() {
+            return Err("This file no longer has conflicts. Refresh the repository.".into());
+        }
+        let read = |stage: &str| -> Result<Option<String>, String> {
+            let blob = entries.lines().find_map(|line| {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                if fields.get(2) == Some(&stage) {
+                    fields.get(1).copied()
+                } else {
+                    None
+                }
+            });
+            let Some(blob) = blob else {
+                return Ok(None);
+            };
+            let size = git(&location, &["cat-file", "-s", blob])?
+                .trim()
+                .parse::<usize>()
+                .map_err(|e| e.to_string())?;
+            if size > 1024 * 1024 {
+                return Err("Conflict preview supports files up to 1 MiB".into());
+            }
+            let content = git(&location, &["cat-file", "blob", blob])?;
+            if content.contains('\0') || content.contains('\u{fffd}') {
+                return Err("Binary conflicts must be resolved by choosing a side".into());
+            }
+            Ok(Some(content))
+        };
+        Ok(ConflictVersions {
+            base: read("1")?,
+            ours: read("2")?,
+            theirs: read("3")?,
+        })
+    })
+    .await
 }
 fn validate_hash(hash: &str) -> Result<(), String> {
     if !(4..=64).contains(&hash.len()) || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -581,7 +766,9 @@ pub async fn repository_action(
 fn execute_action(location: &Location, action: Action) -> Result<String, String> {
     let value = action.value.unwrap_or_default();
     let extra = action.extra.unwrap_or_default();
-    if value.starts_with('-') && action.kind != "commit" {
+    if value.starts_with('-')
+        && !matches!(action.kind.as_str(), "commit" | "reword" | "resolveEdited")
+    {
         return Err("Values cannot start with '-'".into());
     }
     let paths = action.paths.unwrap_or_default();
@@ -611,16 +798,274 @@ fn execute_action(location: &Location, action: Action) -> Result<String, String>
             if value.trim().is_empty() {
                 return Err("Commit message is required".into());
             }
-            git(location, &["commit", "-m", &value])
+            let mut args = vec!["commit", "-m", &value];
+            if action.allow_empty {
+                args.push("--allow-empty");
+            }
+            git(location, &args)
         }
-        "fetch" => git(location, &["fetch", "--all"]),
+        "fetch" => git(location, &["fetch", "--all", "--prune", "--tags"]),
         "pull" => git(location, &["pull", "--ff-only"]),
         "push" => git(location, &["push"]),
+        "publishBranch" => {
+            let branch = git(location, &["symbolic-ref", "--short", "HEAD"])?;
+            git(
+                location,
+                &[
+                    "push",
+                    "--set-upstream",
+                    "--",
+                    &value,
+                    &format!("HEAD:refs/heads/{}", branch.trim()),
+                ],
+            )
+        }
+        "amend" => {
+            if value.trim().is_empty() {
+                return Err("Commit message is required".into());
+            }
+            git(
+                location,
+                &["commit", "--amend", "--allow-empty", "-m", &value],
+            )
+        }
+        "discard" => {
+            if paths.is_empty() {
+                return Err("Choose files to discard".into());
+            }
+            let mut args = if extra == "untracked" {
+                vec!["clean", "-f", "-d", "--"]
+            } else {
+                vec!["restore", "--worktree", "--"]
+            };
+            args.extend(paths.iter().map(String::as_str));
+            git(location, &args)
+        }
+        "forcePush" => {
+            // An explicit expected object protects against background fetches updating the lease.
+            let upstream = git(
+                location,
+                &["rev-parse", "--symbolic-full-name", "@{upstream}"],
+            )?;
+            let expected = git(location, &["rev-parse", "@{upstream}"])?;
+            let branch = git(location, &["symbolic-ref", "--short", "HEAD"])?;
+            let remote = git(
+                location,
+                &[
+                    "config",
+                    "--get",
+                    &format!("branch.{}.remote", branch.trim()),
+                ],
+            )?;
+            let target = git(
+                location,
+                &[
+                    "config",
+                    "--get",
+                    &format!("branch.{}.merge", branch.trim()),
+                ],
+            )?;
+            if !upstream.trim().starts_with("refs/remotes/")
+                || !target.trim().starts_with("refs/heads/")
+            {
+                return Err("A remote tracking branch is required".into());
+            }
+            git(
+                location,
+                &[
+                    "push",
+                    &format!("--force-with-lease={}:{}", target.trim(), expected.trim()),
+                    "--",
+                    remote.trim(),
+                    &format!("HEAD:{}", target.trim()),
+                ],
+            )
+        }
+        "checkoutCommit" => {
+            let hash = commit_target(location, &value)?;
+            git(location, &["switch", "--detach", &hash])
+        }
+        "reset" => {
+            if !matches!(extra.as_str(), "soft" | "mixed" | "hard") {
+                return Err("Choose a reset mode".into());
+            }
+            let hash = commit_target(location, &value)?;
+            git(location, &["reset", &format!("--{extra}"), &hash])
+        }
+        "revert" | "cherryPick" => {
+            let hash = commit_target(location, &value)?;
+            git(
+                location,
+                &[
+                    if action.kind == "revert" {
+                        "revert"
+                    } else {
+                        "cherry-pick"
+                    },
+                    "--no-edit",
+                    &hash,
+                ],
+            )
+        }
+        "createTag" => {
+            git(
+                location,
+                &["check-ref-format", &format!("refs/tags/{value}")],
+            )?;
+            let hash = commit_target(location, if extra.is_empty() { "HEAD" } else { &extra })?;
+            git(location, &["tag", &value, &hash])
+        }
+        "deleteTag" => git(location, &["tag", "-d", "--", &value]),
+        "pushTag" => {
+            if extra.is_empty() || extra.starts_with('-') {
+                return Err("Choose a remote".into());
+            }
+            git(
+                location,
+                &[
+                    "push",
+                    "--",
+                    &extra,
+                    &format!("refs/tags/{value}:refs/tags/{value}"),
+                ],
+            )
+        }
+        "reword" => reword(location, &extra, &value),
+        "rebase" => {
+            let hash = commit_target(location, &value)?;
+            git(location, &["rebase", &hash])
+        }
+        "continueOperation" | "abortOperation" | "skipOperation" => {
+            if !matches!(
+                value.as_str(),
+                "merge" | "rebase" | "cherry-pick" | "revert"
+            ) || (action.kind == "skipOperation" && value == "merge")
+            {
+                return Err("Invalid operation".into());
+            }
+            let flag = match action.kind.as_str() {
+                "continueOperation" => "--continue",
+                "abortOperation" => "--abort",
+                _ => "--skip",
+            };
+            git(location, &["-c", "core.editor=true", value.as_str(), flag])
+        }
+        "resolveOurs" | "resolveTheirs" => {
+            if paths.is_empty() {
+                return Err("Select a conflicted file".into());
+            }
+            let mut args = vec![
+                "checkout",
+                if action.kind == "resolveOurs" {
+                    "--ours"
+                } else {
+                    "--theirs"
+                },
+                "--",
+            ];
+            args.extend(paths.iter().map(String::as_str));
+            git(location, &args)?;
+            let mut args = vec!["add", "--"];
+            args.extend(paths.iter().map(String::as_str));
+            git(location, &args)
+        }
+        "resolveDelete" => {
+            if paths.is_empty() {
+                return Err("Select a conflicted file".into());
+            }
+            let mut args = vec!["rm", "--"];
+            args.extend(paths.iter().map(String::as_str));
+            git(location, &args)
+        }
+        "resolveEdited" => {
+            if paths.len() != 1 || value.len() > 1024 * 1024 || value.contains('\0') {
+                return Err("Choose one text conflict smaller than 1 MiB".into());
+            }
+            let entries = git(location, &["ls-files", "--unmerged", "--", &paths[0]])?;
+            let modes: Vec<_> = entries
+                .lines()
+                .filter_map(|line| line.split_whitespace().next())
+                .collect();
+            if modes.is_empty()
+                || modes
+                    .iter()
+                    .any(|mode| !matches!(*mode, "100644" | "100755"))
+            {
+                return Err("Only regular text file conflicts can be edited here".into());
+            }
+            let mode = modes[0];
+            let mut cmd = if location.kind == "local" {
+                let mut cmd = Command::new("git");
+                cmd.args(["-C", &location.path, "hash-object", "-w", "--stdin"]);
+                cmd
+            } else {
+                let mut cmd = ssh::command(
+                    location.host.as_ref().ok_or("SSH host is missing")?,
+                    ssh::Mode::Session,
+                )?;
+                cmd.arg(format!(
+                    "git -C {} hash-object -w --stdin",
+                    quote(&location.path)
+                ));
+                cmd
+            };
+            cmd.env("GIT_TERMINAL_PROMPT", "0");
+            let blob = output_with_input(cmd, 180, Some(value.into_bytes()))?;
+            git(
+                location,
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    mode,
+                    blob.trim(),
+                    &paths[0],
+                ],
+            )?;
+            git(location, &["checkout-index", "--force", "--", &paths[0]])
+        }
+        "stash" => git(
+            location,
+            &["stash", "push", "--include-untracked", "-m", &value],
+        ),
+        "stashApply" | "stashPop" | "stashDrop" => {
+            if !value.starts_with("stash@{")
+                || !value.ends_with('}')
+                || value[7..value.len() - 1].parse::<u32>().is_err()
+            {
+                return Err("Choose a stash entry".into());
+            }
+            git(
+                location,
+                &[
+                    "stash",
+                    match action.kind.as_str() {
+                        "stashApply" => "apply",
+                        "stashPop" => "pop",
+                        _ => "drop",
+                    },
+                    &value,
+                ],
+            )
+        }
         "createBranch" => {
             git(location, &["check-ref-format", "--branch", &value])?;
-            git(location, &["switch", "-c", &value])
+            if extra.is_empty() {
+                git(location, &["switch", "-c", &value])
+            } else {
+                let hash = commit_target(location, &extra)?;
+                git(location, &["branch", &value, &hash])
+            }
         }
         "switchBranch" => git(location, &["switch", "--", &value]),
+        "trackBranch" => git(location, &["switch", "--track", "--", &value]),
+        "renameBranch" => {
+            if extra.is_empty() || extra.starts_with('-') {
+                return Err("Choose a branch name".into());
+            }
+            git(location, &["check-ref-format", "--branch", &extra])?;
+            git(location, &["branch", "-m", "--", &value, &extra])
+        }
         "deleteBranch" => git(location, &["branch", "-d", "--", &value]),
         "merge" => git(location, &["merge", "--no-edit", "--", &value]),
         "addRemote" => {
@@ -632,6 +1077,80 @@ fn execute_action(location: &Location, action: Action) -> Result<String, String>
         "removeRemote" => git(location, &["remote", "remove", &value]),
         _ => Err("Unsupported Git operation".into()),
     }
+}
+
+fn commit_target(location: &Location, value: &str) -> Result<String, String> {
+    if value.is_empty() || value.starts_with('-') {
+        return Err("Choose a commit".into());
+    }
+    git(
+        location,
+        &["rev-parse", "--verify", &format!("{value}^{{commit}}")],
+    )
+    .map(|s| s.trim().to_owned())
+}
+
+fn reword(location: &Location, target: &str, message: &str) -> Result<String, String> {
+    if message.trim().is_empty() {
+        return Err("Commit message is required".into());
+    }
+    let hash = commit_target(location, target)?;
+    git(location, &["merge-base", "--is-ancestor", &hash, "HEAD"])?;
+    if !git(location, &["status", "--porcelain"])?.trim().is_empty() {
+        return Err("Commit or stash all changes before editing history".into());
+    }
+    git(location, &["symbolic-ref", "--quiet", "HEAD"])?;
+    let parents = git(location, &["rev-list", "--parents", "-n", "1", &hash])?;
+    let base = parents.split_whitespace().nth(1);
+    let range = base.map(|b| format!("{b}..HEAD"));
+    if !git(
+        location,
+        &["rev-list", "--merges", range.as_deref().unwrap_or("HEAD")],
+    )?
+    .trim()
+    .is_empty()
+    {
+        return Err("Reword currently requires a linear history without merge commits".into());
+    }
+    if hash == commit_target(location, "HEAD")? {
+        return git(
+            location,
+            &[
+                "commit",
+                "--amend",
+                "--only",
+                "--allow-empty",
+                "-m",
+                message,
+            ],
+        );
+    }
+    let mut args = vec![
+        "-c",
+        "sequence.editor=sed -i '1s/^pick /edit /'",
+        "rebase",
+        "--interactive",
+        "--keep-empty",
+        "--reapply-cherry-picks",
+        "--empty=keep",
+    ];
+    args.push(base.unwrap_or("--root"));
+    git(location, &args)?;
+    git(
+        location,
+        &[
+            "commit",
+            "--amend",
+            "--only",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+    )?;
+    git(
+        location,
+        &["-c", "core.editor=true", "rebase", "--continue"],
+    )
 }
 #[tauri::command]
 pub async fn repository_create(path: String, url: Option<String>) -> Result<(), String> {
@@ -953,6 +1472,223 @@ mod tests {
         }
     }
 
+    fn workflow_repo() -> (tempfile::TempDir, Location) {
+        let dir = tempfile::tempdir().unwrap();
+        let loc = Location {
+            kind: "local".into(),
+            path: dir.path().to_string_lossy().into(),
+            host: None,
+        };
+        git(&loc, &["init", "-b", "main"]).unwrap();
+        git(&loc, &["config", "user.name", "Workflow Test"]).unwrap();
+        git(&loc, &["config", "user.email", "test@example.test"]).unwrap();
+        git(&loc, &["config", "commit.gpgsign", "false"]).unwrap();
+        git(&loc, &["config", "core.autocrlf", "false"]).unwrap();
+        git(&loc, &["config", "core.hooksPath", ".git/no-hooks"]).unwrap();
+        (dir, loc)
+    }
+    fn run_action(
+        loc: &Location,
+        kind: &str,
+        value: &str,
+        extra: &str,
+        paths: &[&str],
+        allow_empty: bool,
+    ) -> Result<String, String> {
+        execute_action(
+            loc,
+            Action {
+                kind: kind.into(),
+                value: Some(value.into()),
+                extra: Some(extra.into()),
+                paths: Some(paths.iter().map(|s| s.to_string()).collect()),
+                allow_empty,
+            },
+        )
+    }
+    #[test]
+    fn history_actions_preserve_trees_and_rewrite_root_and_descendants() {
+        let (dir, loc) = workflow_repo();
+        assert!(run_action(&loc, "commit", "empty rejected", "", &[], false).is_err());
+        run_action(&loc, "commit", "root\n\nbody", "", &[], true).unwrap();
+        let root = commit_target(&loc, "HEAD").unwrap();
+        std::fs::write(dir.path().join("file.txt"), "one\n").unwrap();
+        run_action(&loc, "stage", "", "", &["file.txt"], false).unwrap();
+        run_action(&loc, "commit", "second", "", &[], false).unwrap();
+        run_action(&loc, "commit", "empty descendant", "", &[], true).unwrap();
+        let tree = git(&loc, &["rev-parse", "HEAD^{tree}"]).unwrap();
+        run_action(&loc, "createBranch", "from-root", &root, &[], false).unwrap();
+        assert_eq!(commit_target(&loc, "from-root").unwrap(), root);
+        assert_eq!(
+            git(&loc, &["branch", "--show-current"]).unwrap().trim(),
+            "main"
+        );
+        run_action(&loc, "createTag", "v1", &root, &[], false).unwrap();
+        assert_eq!(commit_target(&loc, "v1").unwrap(), root);
+        run_action(&loc, "reword", "new root\n\nnew body", &root, &[], false).unwrap();
+        assert_eq!(
+            git(&loc, &["rev-list", "--count", "HEAD"]).unwrap().trim(),
+            "3"
+        );
+        assert_eq!(git(&loc, &["rev-parse", "HEAD^{tree}"]).unwrap(), tree);
+        assert_eq!(
+            git(&loc, &["show", "-s", "--format=%B", "HEAD~2"])
+                .unwrap()
+                .trim(),
+            "new root\n\nnew body"
+        );
+        let second = commit_target(&loc, "HEAD~1").unwrap();
+        run_action(&loc, "reword", "new second", &second, &[], false).unwrap();
+        assert_eq!(
+            git(&loc, &["log", "-1", "--format=%s", "HEAD~1"])
+                .unwrap()
+                .trim(),
+            "new second"
+        );
+        std::fs::write(dir.path().join("file.txt"), "dirty\n").unwrap();
+        run_action(&loc, "stage", "", "", &["file.txt"], false).unwrap();
+        assert!(run_action(&loc, "reword", "must fail", "HEAD", &[], false).is_err());
+        run_action(&loc, "reset", "HEAD~1", "soft", &[], false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("file.txt")).unwrap(),
+            "dirty\n"
+        );
+        run_action(&loc, "reset", "HEAD", "mixed", &[], false).unwrap();
+        assert!(git(&loc, &["diff", "--cached"]).unwrap().is_empty());
+        run_action(&loc, "reset", "HEAD", "hard", &[], false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("file.txt")).unwrap(),
+            "one\n"
+        );
+        assert!(snapshot(&loc).unwrap().tags.contains(&"v1".to_owned()));
+        run_action(&loc, "deleteTag", "v1", "", &[], false).unwrap();
+        run_action(
+            &loc,
+            "renameBranch",
+            "from-root",
+            "renamed-root",
+            &[],
+            false,
+        )
+        .unwrap();
+        assert_eq!(commit_target(&loc, "renamed-root").unwrap(), root);
+        std::fs::write(dir.path().join("file.txt"), "amended contents\n").unwrap();
+        run_action(&loc, "stage", "", "", &["file.txt"], false).unwrap();
+        let count = git(&loc, &["rev-list", "--count", "HEAD"]).unwrap();
+        run_action(&loc, "amend", "amended", "", &[], false).unwrap();
+        assert_eq!(git(&loc, &["rev-list", "--count", "HEAD"]).unwrap(), count);
+        assert_eq!(
+            git(&loc, &["show", "HEAD:file.txt"]).unwrap(),
+            "amended contents\n"
+        );
+        std::fs::write(dir.path().join("file.txt"), "discard me\n").unwrap();
+        run_action(&loc, "discard", "", "", &["file.txt"], false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("file.txt")).unwrap(),
+            "amended contents\n"
+        );
+        for name in ["[draft].txt", "d.txt"] {
+            std::fs::write(dir.path().join(name), "untracked\n").unwrap();
+        }
+        run_action(&loc, "discard", "", "untracked", &["[draft].txt"], false).unwrap();
+        assert!(!dir.path().join("[draft].txt").exists());
+        assert!(dir.path().join("d.txt").exists());
+    }
+    #[test]
+    fn conflicts_can_choose_a_side_continue_or_abort() {
+        let (dir, loc) = workflow_repo();
+        std::fs::write(dir.path().join("f.txt"), "base\n").unwrap();
+        run_action(&loc, "stage", "", "", &["f.txt"], false).unwrap();
+        run_action(&loc, "commit", "base", "", &[], false).unwrap();
+        run_action(&loc, "createBranch", "side", "", &[], false).unwrap();
+        std::fs::write(dir.path().join("f.txt"), "side\n").unwrap();
+        run_action(&loc, "stage", "", "", &["f.txt"], false).unwrap();
+        run_action(&loc, "commit", "side", "", &[], false).unwrap();
+        run_action(&loc, "switchBranch", "main", "", &[], false).unwrap();
+        std::fs::write(dir.path().join("f.txt"), "main\n").unwrap();
+        run_action(&loc, "stage", "", "", &["f.txt"], false).unwrap();
+        run_action(&loc, "commit", "main", "", &[], false).unwrap();
+        assert!(run_action(&loc, "merge", "side", "", &[], false).is_err());
+        assert_eq!(operation_state(&loc).unwrap().as_deref(), Some("merge"));
+        let versions =
+            tauri::async_runtime::block_on(repository_conflict(loc.clone(), "f.txt".into(), None))
+                .unwrap();
+        assert_eq!(versions.base.as_deref(), Some("base\n"));
+        assert_eq!(versions.ours.as_deref(), Some("main\n"));
+        assert_eq!(versions.theirs.as_deref(), Some("side\n"));
+        run_action(&loc, "resolveTheirs", "", "", &["f.txt"], false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "side\n"
+        );
+        run_action(&loc, "continueOperation", "merge", "", &[], false).unwrap();
+        assert_eq!(operation_state(&loc).unwrap(), None);
+        run_action(&loc, "reset", "HEAD~1", "hard", &[], false).unwrap();
+        assert!(run_action(&loc, "merge", "side", "", &[], false).is_err());
+        run_action(
+            &loc,
+            "resolveEdited",
+            "combined\nUnicode: 你好\n'quoted' $literal\n",
+            "",
+            &["f.txt"],
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "combined\nUnicode: 你好\n'quoted' $literal\n"
+        );
+        assert!(git(&loc, &["ls-files", "--unmerged"]).unwrap().is_empty());
+        run_action(&loc, "continueOperation", "merge", "", &[], false).unwrap();
+        run_action(&loc, "reset", "HEAD~1", "hard", &[], false).unwrap();
+        assert!(run_action(&loc, "cherryPick", "side", "", &[], false).is_err());
+        assert_eq!(
+            operation_state(&loc).unwrap().as_deref(),
+            Some("cherry-pick")
+        );
+        run_action(&loc, "abortOperation", "cherry-pick", "", &[], false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("f.txt")).unwrap(),
+            "main\n"
+        );
+        std::fs::write(dir.path().join("untracked.txt"), "saved\n").unwrap();
+        run_action(&loc, "stash", "save all", "", &[], false).unwrap();
+        assert!(!dir.path().join("untracked.txt").exists());
+        assert_eq!(snapshot(&loc).unwrap().stashes.len(), 1);
+        run_action(&loc, "stashPop", "stash@{0}", "", &[], false).unwrap();
+        assert!(dir.path().join("untracked.txt").exists());
+    }
+    #[test]
+    fn force_push_rejects_unseen_remote_updates() {
+        let (_dir, loc) = workflow_repo();
+        let remote = tempfile::tempdir().unwrap();
+        let mut init = Command::new("git");
+        init.args(["init", "--bare", remote.path().to_str().unwrap()]);
+        output(init, 10).unwrap();
+        git(
+            &loc,
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        )
+        .unwrap();
+        run_action(&loc, "commit", "root", "", &[], true).unwrap();
+        run_action(&loc, "publishBranch", "origin", "", &[], false).unwrap();
+        assert_eq!(snapshot(&loc).unwrap().tracking.unwrap().ahead, 0);
+        run_action(&loc, "reword", "rewritten", "HEAD", &[], false).unwrap();
+        run_action(&loc, "forcePush", "", "", &[], false).unwrap();
+        let (_other_dir, other) = workflow_repo();
+        git(
+            &other,
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        )
+        .unwrap();
+        git(&other, &["fetch", "origin"]).unwrap();
+        git(&other, &["branch", "-m", "unused"]).unwrap();
+        run_action(&other, "trackBranch", "origin/main", "", &[], false).unwrap();
+        run_action(&other, "commit", "remote advanced", "", &[], true).unwrap();
+        git(&other, &["push", "origin", "main"]).unwrap();
+        run_action(&loc, "reword", "second rewrite", "HEAD", &[], false).unwrap();
+        assert!(run_action(&loc, "forcePush", "", "", &[], false).is_err());
+    }
     #[test]
     fn local_workflow() {
         let dir = std::env::temp_dir().join(format!("repoweft-test-{}", std::process::id()));
@@ -972,6 +1708,7 @@ mod tests {
             paths: Some(paths.into_iter().map(str::to_string).collect()),
             value: Some(value.into()),
             extra: None,
+            allow_empty: false,
         };
         git(
             &loc,

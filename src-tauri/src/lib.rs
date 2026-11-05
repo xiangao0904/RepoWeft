@@ -59,6 +59,7 @@ pub fn run() {
             git::repository_snapshot,
             git::repository_log,
             git::repository_detail,
+            git::repository_conflict,
             diffs::repository_diff_open,
             diffs::repository_diff_page,
             diffs::repository_diff_close,
