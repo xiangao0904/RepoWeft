@@ -1,5 +1,16 @@
 import { useEffect, useState } from "react";
 
+import { createWriteQueue } from "./storageQueue";
+const writes = createWriteQueue((key, value) =>
+  localStorage.setItem(`repoweft.v1.${key}`, JSON.stringify(value)),
+);
+window.addEventListener("pagehide", writes.flush);
+window.addEventListener("pointerup", writes.flush);
+window.addEventListener("pointercancel", writes.flush);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) writes.flush();
+});
+
 export function useStored<T>(key: string, fallback: T) {
   const [value, setValue] = useState<T>(() => {
     try {
@@ -10,11 +21,7 @@ export function useStored<T>(key: string, fallback: T) {
     }
   });
   useEffect(() => {
-    try {
-      localStorage.setItem(`repoweft.v1.${key}`, JSON.stringify(value));
-    } catch {
-      /* In-memory state remains available. */
-    }
+    writes.set(key, value);
   }, [key, value]);
   return [value, setValue] as const;
 }
