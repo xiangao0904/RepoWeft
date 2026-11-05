@@ -105,15 +105,17 @@ export default function TerminalPanel({
         ? gitService.warmConnection(repo.location.host).catch(() => {})
         : Promise.resolve();
     void authenticated
-      .then(() =>
-        invoke<number>("terminal_open", {
+      .then(() => {
+        if (disposed) return null;
+        return invoke<number>("terminal_open", {
           location: repo.location,
           cols: terminal.cols,
           rows: terminal.rows,
           output,
-        }),
-      )
+        });
+      })
       .then((session) => {
+        if (session === null) return;
         id = session;
         if (disposed) {
           void invoke("terminal_close", { id }).catch(() => {});
