@@ -1204,24 +1204,14 @@ fn reword(location: &Location, target: &str, message: &str) -> Result<String, St
         return Err("Commit message is required".into());
     }
     let hash = commit_target(location, target)?;
-    git(location, &["merge-base", "--is-ancestor", &hash, "HEAD"])?;
-    if !git(location, &["status", "--porcelain"])?.trim().is_empty() {
-        return Err("Commit or stash all changes before editing history".into());
+    let head = commit_target(location, "HEAD")?;
+    let branch = git(location, &["symbolic-ref", "--quiet", "HEAD"])?;
+    git(location, &["merge-base", "--is-ancestor", &hash, &head])?;
+    if operation_state(location)?.is_some() {
+        return Err("REWORD_OPERATION_ACTIVE".into());
     }
-    git(location, &["symbolic-ref", "--quiet", "HEAD"])?;
-    let parents = git(location, &["rev-list", "--parents", "-n", "1", &hash])?;
-    let base = parents.split_whitespace().nth(1);
-    let range = base.map(|b| format!("{b}..HEAD"));
-    if !git(
-        location,
-        &["rev-list", "--merges", range.as_deref().unwrap_or("HEAD")],
-    )?
-    .trim()
-    .is_empty()
-    {
-        return Err("Reword currently requires a linear history without merge commits".into());
-    }
-    if hash == commit_target(location, "HEAD")? {
+    // --only changes the message without including the real index or working files.
+    if hash == head {
         return git(
             location,
             &[
@@ -1234,31 +1224,116 @@ fn reword(location: &Location, target: &str, message: &str) -> Result<String, St
             ],
         );
     }
-    let mut args = vec![
-        "-c",
-        "sequence.editor=sed -i '1s/^pick /edit /'",
-        "rebase",
-        "--interactive",
-        "--keep-empty",
-        "--reapply-cherry-picks",
-        "--empty=keep",
-    ];
-    args.push(base.unwrap_or("--root"));
-    git(location, &args)?;
+    let parents = git(location, &["rev-list", "--parents", "-n", "1", &hash])?;
+    let base = parents.split_whitespace().nth(1);
+    let range = base.map(|b| format!("{b}..{head}"));
+    if !git(
+        location,
+        &["rev-list", "--merges", range.as_deref().unwrap_or(&head)],
+    )?
+    .trim()
+    .is_empty()
+    {
+        return Err("Reword currently requires a linear history without merge commits".into());
+    }
+    // Replaying in a disposable worktree leaves the user's staged, unstaged and
+    // untracked changes untouched. The branch is updated only after cleanup.
+    let local_directory = if location.kind == "local" {
+        Some(
+            tempfile::Builder::new()
+                .prefix("repoweft-reword-")
+                .tempdir()
+                .map_err(|e| e.to_string())?,
+        )
+    } else {
+        None
+    };
+    let path = if let Some(dir) = &local_directory {
+        dir.path().to_string_lossy().into_owned()
+    } else {
+        let path = ssh::exec(
+            location.host.as_ref().ok_or("SSH host is missing")?,
+            ssh::Mode::Session,
+            "mktemp -d /tmp/repoweft-reword.XXXXXXXX",
+            15,
+        )?
+        .trim()
+        .to_owned();
+        if !path.starts_with("/tmp/repoweft-reword.") || path.contains(['\n', '\r']) {
+            return Err("REWORD_TEMP_WORKTREE".into());
+        }
+        path
+    };
+    if let Err(error) = git(location, &["worktree", "add", "--detach", &path, &head]) {
+        if location.kind == "ssh" {
+            let _ = ssh::exec(
+                location.host.as_ref().ok_or("SSH host is missing")?,
+                ssh::Mode::Session,
+                &format!("rmdir -- {}", quote(&path)),
+                15,
+            );
+        }
+        return Err(error);
+    }
+    let workspace = Location {
+        path: path.clone(),
+        ..location.clone()
+    };
+    let replay = (|| {
+        let mut args = vec![
+            "-c",
+            "sequence.editor=sed -i '1s/^pick /edit /'",
+            "-c",
+            "rebase.updateRefs=false",
+            "-c",
+            "rebase.autoSquash=false",
+            "rebase",
+            "--interactive",
+            "--keep-empty",
+            "--reapply-cherry-picks",
+            "--empty=keep",
+        ];
+        args.push(base.unwrap_or("--root"));
+        git(&workspace, &args)?;
+        git(
+            &workspace,
+            &[
+                "commit",
+                "--amend",
+                "--only",
+                "--allow-empty",
+                "-m",
+                message,
+            ],
+        )?;
+        git(
+            &workspace,
+            &["-c", "core.editor=true", "rebase", "--continue"],
+        )?;
+        let rewritten = commit_target(&workspace, "HEAD")?;
+        if git(&workspace, &["rev-parse", "HEAD^{tree}"])?
+            != git(location, &["rev-parse", &format!("{head}^{{tree}}")])?
+        {
+            return Err("REWORD_TREE_CHANGED".into());
+        }
+        Ok::<String, String>(rewritten)
+    })();
+    let cleanup = git(location, &["worktree", "remove", "--force", &path]);
+    let rewritten = replay?;
+    cleanup?;
+    if git(location, &["symbolic-ref", "--quiet", "HEAD"])? != branch {
+        return Err("REWRITE_STATE_CHANGED".into());
+    }
     git(
         location,
         &[
-            "commit",
-            "--amend",
-            "--only",
-            "--allow-empty",
+            "update-ref",
             "-m",
-            message,
+            "RepoWeft: edit commit message",
+            branch.trim(),
+            &rewritten,
+            &head,
         ],
-    )?;
-    git(
-        location,
-        &["-c", "core.editor=true", "rebase", "--continue"],
     )
 }
 #[tauri::command]
@@ -1619,6 +1694,84 @@ mod tests {
         )
     }
     #[test]
+    fn message_edits_preserve_dirty_index_worktree_and_untracked_files() {
+        let (dir, loc) = workflow_repo();
+        std::fs::write(dir.path().join("file.txt"), "base\n").unwrap();
+        run_action(&loc, "stage", "", "", &["file.txt"], false).unwrap();
+        run_action(&loc, "commit", "original root", "", &[], false).unwrap();
+        let root = commit_target(&loc, "HEAD").unwrap();
+        run_action(&loc, "commit", "second", "", &[], true).unwrap();
+        run_action(&loc, "commit", "third", "", &[], true).unwrap();
+        let untouched = commit_target(&loc, "HEAD").unwrap();
+        git(&loc, &["branch", "untouched", &untouched]).unwrap();
+        git(&loc, &["config", "rebase.updateRefs", "true"]).unwrap();
+        git(&loc, &["config", "rebase.autoSquash", "true"]).unwrap();
+        std::fs::write(dir.path().join("file.txt"), "staged\n").unwrap();
+        run_action(&loc, "stage", "", "", &["file.txt"], false).unwrap();
+        std::fs::write(dir.path().join("file.txt"), "unstaged\n").unwrap();
+        std::fs::write(dir.path().join("untracked.bin"), [0, 1, 2, 255]).unwrap();
+        let index = git(&loc, &["ls-files", "--stage", "-z"]).unwrap();
+        let staged = git(&loc, &["diff", "--cached", "--binary"]).unwrap();
+        let unstaged = git(&loc, &["diff", "--binary"]).unwrap();
+        let status = git(&loc, &["status", "--porcelain", "-z"]).unwrap();
+        for target in [&root, "HEAD"] {
+            run_action(&loc, "reword", "updated message", target, &[], false).unwrap();
+            assert_eq!(commit_target(&loc, "untouched").unwrap(), untouched);
+            assert_eq!(git(&loc, &["ls-files", "--stage", "-z"]).unwrap(), index);
+            assert_eq!(
+                git(&loc, &["diff", "--cached", "--binary"]).unwrap(),
+                staged
+            );
+            assert_eq!(git(&loc, &["diff", "--binary"]).unwrap(), unstaged);
+            assert_eq!(git(&loc, &["status", "--porcelain", "-z"]).unwrap(), status);
+            assert_eq!(git(&loc, &["show", "HEAD:file.txt"]).unwrap(), "base\n");
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join("file.txt")).unwrap(),
+                "unstaged\n"
+            );
+            assert_eq!(
+                std::fs::read(dir.path().join("untracked.bin")).unwrap(),
+                [0, 1, 2, 255]
+            );
+            assert_eq!(
+                git(&loc, &["worktree", "list", "--porcelain"])
+                    .unwrap()
+                    .lines()
+                    .filter(|line| line.starts_with("worktree "))
+                    .count(),
+                1
+            );
+            assert!(git(&loc, &["stash", "list"]).unwrap().is_empty());
+        }
+        let head = commit_target(&loc, "HEAD").unwrap();
+        let root = commit_target(&loc, "HEAD~2").unwrap();
+        let hooks = dir.path().join("test-hooks");
+        std::fs::create_dir(&hooks).unwrap();
+        let hook = hooks.join("pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        git(&loc, &["config", "core.hooksPath", hooks.to_str().unwrap()]).unwrap();
+        assert!(run_action(&loc, "reword", "hook must reject", &root, &[], false).is_err());
+        assert_eq!(commit_target(&loc, "HEAD").unwrap(), head);
+        assert_eq!(git(&loc, &["ls-files", "--stage", "-z"]).unwrap(), index);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("file.txt")).unwrap(),
+            "unstaged\n"
+        );
+        assert_eq!(
+            git(&loc, &["worktree", "list", "--porcelain"])
+                .unwrap()
+                .lines()
+                .filter(|line| line.starts_with("worktree "))
+                .count(),
+            1
+        );
+    }
+    #[test]
     fn history_actions_preserve_trees_and_rewrite_root_and_descendants() {
         let (dir, loc) = workflow_repo();
         assert!(run_action(&loc, "commit", "empty rejected", "", &[], false).is_err());
@@ -1659,7 +1812,9 @@ mod tests {
         );
         std::fs::write(dir.path().join("file.txt"), "dirty\n").unwrap();
         run_action(&loc, "stage", "", "", &["file.txt"], false).unwrap();
-        assert!(run_action(&loc, "reword", "must fail", "HEAD", &[], false).is_err());
+        run_action(&loc, "reword", "message only", "HEAD", &[], false).unwrap();
+        assert_eq!(git(&loc, &["show", "HEAD:file.txt"]).unwrap(), "one\n");
+        assert!(!git(&loc, &["diff", "--cached"]).unwrap().is_empty());
         run_action(&loc, "reset", "HEAD~1", "soft", &[], false).unwrap();
         assert_eq!(
             std::fs::read_to_string(dir.path().join("file.txt")).unwrap(),

@@ -1,6 +1,12 @@
 import { createContext, useContext } from "react";
 
 export const en = {
+  rewordOperationActive:
+    "Finish or abort the current Git operation before editing a commit message.",
+  rewordTempWorktree:
+    "Could not create a temporary worktree. Your current branch and files have been kept.",
+  rewordTreeChanged:
+    "A hook or history edit changed file content. The original branch and files have been kept.",
   tagNameInput: "Tag name",
   quickNameKeys: "Enter to confirm · Esc to cancel",
   quickCommitKeys: "Ctrl/⌘+Enter to save · Esc to cancel",
@@ -445,6 +451,9 @@ export const en = {
 export type MessageKey = keyof typeof en;
 export type Locale = "en" | "zh-CN";
 export const zh: Record<MessageKey, string> = {
+  rewordOperationActive: "请先完成或中止当前的 Git 操作，再修改提交说明。",
+  rewordTempWorktree: "无法创建临时工作树，当前分支和文件已保留。",
+  rewordTreeChanged: "钩子或历史编辑改变了文件内容，原分支和文件已保留。",
   tagNameInput: "标签名称",
   quickNameKeys: "Enter 确认 · Esc 取消",
   quickCommitKeys: "Ctrl/⌘+Enter 保存 · Esc 取消",
@@ -882,6 +891,12 @@ export function errorText(
     case "DIFF_SESSION_EXISTS":
     case "DIFF_INVALID_SESSION":
       return t("diffLoadFailed");
+    case "REWORD_OPERATION_ACTIVE":
+      return t("rewordOperationActive");
+    case "REWORD_TEMP_WORKTREE":
+      return t("rewordTempWorktree");
+    case "REWORD_TREE_CHANGED":
+      return t("rewordTreeChanged");
     case "REWRITE_STATE_CHANGED":
       return t("rewriteStateChanged");
     case "ACCOUNT_REMOTE_REQUIRED":
