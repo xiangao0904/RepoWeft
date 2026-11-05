@@ -24,7 +24,6 @@ dist-ssr
 *.sln
 *.sw?
 
-AGENTS.md
 proposal.md
 # Local analysis caches and Windows device artifact
 .codegraph/
