@@ -3,6 +3,7 @@ mod avatars;
 mod git;
 mod oauth;
 mod ssh;
+mod tasks;
 mod terminal;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -51,6 +52,7 @@ pub fn run() {
             accounts::account_connect,
             accounts::account_select,
             accounts::account_remove,
+            tasks::repository_cancel,
             git::repository_snapshot,
             git::repository_log,
             git::repository_detail,

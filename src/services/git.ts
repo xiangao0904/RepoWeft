@@ -1,3 +1,5 @@
+import { ReadRequests } from "../lib/requests";
+import { BudgetCache } from "../lib/cache";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   Action,
@@ -10,13 +12,23 @@ import type {
   SSHHost,
 } from "../types";
 import { demoDetail, demoDiff, demoSnapshot } from "./demo";
-import { warmGithubAvatars } from "../lib/avatars";
+import { warmGithubAvatars, cancelGithubAvatars } from "../lib/avatars";
 
 export const desktop = isTauri();
 let sample: Snapshot = structuredClone(demoSnapshot);
 
-const snapshots = new Map<string, Snapshot>();
-const details = new Map<string, Promise<CommitDetail>>();
+const reads = new ReadRequests();
+const snapshots = new BudgetCache<Snapshot>(
+  16 * 1024 * 1024,
+  300_000,
+  Date.now,
+  8,
+);
+const details = new BudgetCache<CommitDetail>(8 * 1024 * 1024, 300_000);
+setInterval(() => {
+  snapshots.prune();
+  details.prune();
+}, 60_000);
 function repoKey(repo: Repository) {
   return JSON.stringify(repo.location);
 }
@@ -99,7 +111,9 @@ async function sshCall<T>(
   command: string,
   args: Record<string, unknown>,
   host?: SSHHost,
+  signal?: AbortSignal,
 ): Promise<T> {
+  signal?.throwIfAborted();
   try {
     return await invoke<T>(command, args);
   } catch (error) {
@@ -107,8 +121,39 @@ async function sshCall<T>(
       window.dispatchEvent(new Event("repoweft:reauthorize"));
     if (!host || !isAuthSignal(String(error))) throw error;
     await authenticate(host);
+    signal?.throwIfAborted();
     return invoke<T>(command, args);
   }
+}
+
+function readCall<T>(
+  repo: Repository,
+  command: string,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<T> {
+  return reads.run(
+    repoKey(repo),
+    JSON.stringify([command, args]),
+    async (active) => {
+      const requestId = crypto.randomUUID();
+      const cancel = () => {
+        void invoke("repository_cancel", { requestId }).catch(() => {});
+      };
+      active.addEventListener("abort", cancel, { once: true });
+      try {
+        return await sshCall<T>(
+          command,
+          { ...args, requestId },
+          hostOf(repo),
+          active,
+        );
+      } finally {
+        active.removeEventListener("abort", cancel);
+      }
+    },
+    signal,
+  );
 }
 
 // UI components depend on this service; transport and Git arguments stay here and in Rust.
@@ -128,20 +173,52 @@ export const gitService = {
   sshHosts(): Promise<SSHHost[]> {
     return invoke("ssh_config_hosts");
   },
+  release(repo: Repository) {
+    const key = repoKey(repo);
+    gitService.cancelReads(repo);
+    snapshots.delete(key);
+    details.deletePrefix(`${key}:`);
+  },
   cachedSnapshot(repo: Repository): Snapshot | undefined {
     return snapshots.get(repoKey(repo));
   },
-  async snapshot(repo: Repository): Promise<Snapshot> {
+  cancelReads(repo: Repository) {
+    reads.cancel(repoKey(repo));
+    const data = snapshots.get(repoKey(repo));
+    if (data) cancelGithubAvatars(data.remotes.map((remote) => remote.url));
+  },
+  async snapshot(
+    repo: Repository,
+    signal?: AbortSignal,
+    sections?: (keyof Snapshot)[],
+    previous?: Snapshot,
+    expandUntracked = true,
+  ): Promise<Snapshot> {
     const data: Snapshot = repo.demo
       ? structuredClone(sample)
-      : await sshCall(
+      : await readCall<Snapshot>(
+          repo,
           "repository_snapshot",
-          { location: repo.location },
-          hostOf(repo),
+          {
+            location: repo.location,
+            sections: sections ?? null,
+            expandUntracked,
+          },
+          signal,
         );
+    if (previous && sections) {
+      for (const key of [
+        "branch",
+        "files",
+        "commits",
+        "branches",
+        "remotes",
+      ] as const) {
+        if (!sections.includes(key))
+          Object.assign(data, { [key]: previous[key] });
+      }
+    }
     const key = repoKey(repo);
-    snapshots.delete(key);
-    if (snapshots.size >= 8) snapshots.delete(snapshots.keys().next().value!);
     snapshots.set(key, data);
     // Runs before any row mounts, so the bulk page answers the whole viewport at once.
     if (!repo.demo)
@@ -155,6 +232,7 @@ export const gitService = {
     repo: Repository,
     skip: number,
     currentOnly: boolean,
+    signal?: AbortSignal,
   ): Promise<Commit[]> {
     if (repo.demo) {
       if (skip) return [];
@@ -178,10 +256,11 @@ export const gitService = {
       }
       return sample.commits.filter((commit) => reachable.has(commit.hash));
     }
-    const commits = await sshCall<Commit[]>(
+    const commits = await readCall<Commit[]>(
+      repo,
       "repository_log",
       { location: repo.location, skip, currentOnly },
-      hostOf(repo),
+      signal,
     );
     const data = snapshots.get(repoKey(repo));
     if (data)
@@ -191,7 +270,11 @@ export const gitService = {
       );
     return commits;
   },
-  async detail(repo: Repository, hash: string): Promise<CommitDetail> {
+  async detail(
+    repo: Repository,
+    hash: string,
+    signal?: AbortSignal,
+  ): Promise<CommitDetail> {
     if (repo.demo)
       return {
         ...demoDetail,
@@ -203,17 +286,18 @@ export const gitService = {
     const key = `${repoKey(repo)}:${hash}`;
     const old = details.get(key);
     if (old) return old;
-    const pending = sshCall<CommitDetail>(
+    const pending = readCall<CommitDetail>(
+      repo,
       "repository_detail",
       { location: repo.location, hash },
-      hostOf(repo),
+      signal,
     ).catch((error) => {
       details.delete(key);
       throw error;
     });
-    if (details.size >= 64) details.delete(details.keys().next().value!);
-    details.set(key, pending);
-    return pending;
+    const value = await pending;
+    details.set(key, value);
+    return value;
   },
   async diff(
     repo: Repository,
@@ -221,10 +305,12 @@ export const gitService = {
     staged: boolean,
     hash?: string,
     untracked = false,
+    signal?: AbortSignal,
   ): Promise<string> {
     return repo.demo
       ? demoDiff.replaceAll("src/train.py", path)
-      : sshCall(
+      : readCall<string>(
+          repo,
           "repository_diff",
           {
             location: repo.location,
@@ -233,8 +319,30 @@ export const gitService = {
             hash: hash ?? null,
             untracked,
           },
-          hostOf(repo),
+          signal,
         );
+  },
+  refreshAfterAction(
+    repo: Repository,
+    action: Action,
+    previous: Snapshot | null,
+  ): Promise<Snapshot> {
+    const sections: (keyof Snapshot)[] | undefined =
+      action.kind === "stage" || action.kind === "unstage"
+        ? ["files"]
+        : action.kind === "addRemote" || action.kind === "removeRemote"
+          ? ["remotes"]
+          : action.kind === "deleteBranch" || action.kind === "push"
+            ? ["branches"]
+            : action.kind === "fetch"
+              ? ["commits", "branches"]
+              : undefined;
+    return gitService.snapshot(
+      repo,
+      undefined,
+      previous ? sections : undefined,
+      previous ?? undefined,
+    );
   },
   async action(repo: Repository, action: Action): Promise<string> {
     if (!repo.demo)

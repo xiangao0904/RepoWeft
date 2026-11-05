@@ -45,7 +45,7 @@ pub struct Remote {
     name: String,
     url: String,
 }
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct Snapshot {
     branch: String,
     commits: Vec<Commit>,
@@ -98,6 +98,9 @@ pub(crate) fn output(mut command: Command, timeout: u64) -> Result<String, Strin
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
+    if crate::tasks::cancelled() {
+        return Err("READ_CANCELLED".into());
+    }
     let mut child = command
         .spawn()
         .map_err(|e| format!("Unable to start Git/OpenSSH: {e}"))?;
@@ -126,11 +129,20 @@ pub(crate) fn output(mut command: Command, timeout: u64) -> Result<String, Strin
     let err = std::thread::spawn(move || drain(stderr));
     let started = Instant::now();
     let status = loop {
+        if crate::tasks::cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("READ_CANCELLED".into());
+        }
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < Duration::from_secs(timeout) => {
-                std::thread::sleep(Duration::from_millis(3))
-            }
+            Ok(None) if started.elapsed() < Duration::from_secs(timeout) => std::thread::sleep(
+                Duration::from_millis(if started.elapsed() < Duration::from_millis(50) {
+                    3
+                } else {
+                    15
+                }),
+            ),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -274,22 +286,66 @@ fn log(location: &Location, skip: usize, current_only: bool) -> Result<Vec<Commi
         }
     }
 }
+fn file_status(location: &Location, expand_untracked: bool) -> Result<Vec<FileChange>, String> {
+    let raw = git(
+        location,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            if expand_untracked {
+                "--untracked-files=all"
+            } else {
+                "--untracked-files=normal"
+            },
+        ],
+    )?;
+    Ok(parse_status(&raw))
+}
+#[cfg(test)]
 fn snapshot(location: &Location) -> Result<Snapshot, String> {
-    let inside = git(location, &["rev-parse", "--is-inside-work-tree"])?;
-    if inside.trim() != "true" {
-        return Err(
-            "Choose a Git working directory. Bare repositories are not supported yet.".into(),
-        );
+    snapshot_sections(location, None, true)
+}
+fn snapshot_sections(
+    location: &Location,
+    sections: Option<&[String]>,
+    expand_untracked: bool,
+) -> Result<Snapshot, String> {
+    if sections.is_some_and(|items| items.len() == 1 && items[0] == "files") {
+        return Ok(Snapshot {
+            files: file_status(location, expand_untracked)?,
+            ..Snapshot::default()
+        });
+    }
+    let wants =
+        |section: &str| sections.is_none_or(|items| items.iter().any(|item| item == section));
+    if sections.is_none() {
+        let inside = git(location, &["rev-parse", "--is-inside-work-tree"])?;
+        if inside.trim() != "true" {
+            return Err(
+                "Choose a Git working directory. Bare repositories are not supported yet.".into(),
+            );
+        }
     }
     let (branch, files, commits, raw_branches, raw_remotes) = std::thread::scope(|scope| {
-        let status = scope.spawn(|| {
-            git(
-                location,
-                &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-            )
-        });
-        let history = scope.spawn(|| log(location, 0, false));
-        let refs = scope.spawn(|| {
+        let status = scope.spawn(crate::tasks::inherit(|| {
+            if wants("files") {
+                file_status(location, expand_untracked)
+            } else {
+                Ok(Vec::new())
+            }
+        }));
+        let history = scope.spawn(crate::tasks::inherit(|| {
+            if wants("commits") {
+                log(location, 0, false)
+            } else {
+                Ok(Vec::new())
+            }
+        }));
+        let refs = scope.spawn(crate::tasks::inherit(|| {
+            if !wants("branches") {
+                return Ok(String::new());
+            }
             git(
                 location,
                 &[
@@ -299,15 +355,25 @@ fn snapshot(location: &Location) -> Result<Snapshot, String> {
                     "refs/remotes",
                 ],
             )
-        });
-        let remotes = scope.spawn(|| git(location, &["remote", "-v"]));
-        let branch = git(location, &["symbolic-ref", "--short", "-q", "HEAD"])
-            .unwrap_or_else(|_| "HEAD (detached)".into())
-            .trim()
-            .to_string();
+        }));
+        let remotes = scope.spawn(crate::tasks::inherit(|| {
+            if wants("remotes") {
+                git(location, &["remote", "-v"])
+            } else {
+                Ok(String::new())
+            }
+        }));
+        let branch = if wants("branch") {
+            git(location, &["symbolic-ref", "--short", "-q", "HEAD"])
+                .unwrap_or_else(|_| "HEAD (detached)".into())
+                .trim()
+                .to_string()
+        } else {
+            String::new()
+        };
         Ok::<_, String>((
             branch,
-            parse_status(&status.join().map_err(|_| "Status reader failed")??),
+            status.join().map_err(|_| "Status reader failed")??,
             history.join().map_err(|_| "History reader failed")??,
             refs.join().map_err(|_| "Reference reader failed")??,
             remotes.join().map_err(|_| "Remote reader failed")??,
@@ -364,20 +430,37 @@ fn validate_hash(hash: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn repository_snapshot(location: Location) -> Result<Snapshot, String> {
-    blocking(move || snapshot(&location)).await
+pub async fn repository_snapshot(
+    location: Location,
+    request_id: Option<String>,
+    sections: Option<Vec<String>>,
+    expand_untracked: Option<bool>,
+) -> Result<Snapshot, String> {
+    crate::tasks::read(request_id, move || {
+        snapshot_sections(
+            &location,
+            sections.as_deref(),
+            expand_untracked.unwrap_or(true),
+        )
+    })
+    .await
 }
 #[tauri::command]
 pub async fn repository_log(
     location: Location,
     skip: usize,
     current_only: bool,
+    request_id: Option<String>,
 ) -> Result<Vec<Commit>, String> {
-    blocking(move || log(&location, skip, current_only)).await
+    crate::tasks::read(request_id, move || log(&location, skip, current_only)).await
 }
 #[tauri::command]
-pub async fn repository_detail(location: Location, hash: String) -> Result<CommitDetail, String> {
-    blocking(move || {
+pub async fn repository_detail(
+    location: Location,
+    hash: String,
+    request_id: Option<String>,
+) -> Result<CommitDetail, String> {
+    crate::tasks::read(request_id, move || {
         validate_hash(&hash)?;
         let message = git(&location, &["show", "-s", "--format=%B", &hash, "--"])?;
         let raw = git(
@@ -422,8 +505,9 @@ pub async fn repository_diff(
     staged: bool,
     hash: Option<String>,
     untracked: bool,
+    request_id: Option<String>,
 ) -> Result<String, String> {
-    blocking(move || {
+    crate::tasks::read(request_id, move || {
         if let Some(hash) = hash {
             validate_hash(&hash)?;
             return git(
@@ -778,6 +862,29 @@ mod tests {
         assert!(parse_directory_listing("/data\x001\0").is_err());
     }
     #[test]
+    fn partial_status_collapses_untracked_directories_until_expanded() {
+        let dir = std::env::temp_dir().join(format!("repoweft-status-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("untracked")).unwrap();
+        let location = Location {
+            kind: "local".into(),
+            path: dir.to_string_lossy().into_owned(),
+            host: None,
+        };
+        git(&location, &["init", "-q"]).unwrap();
+        std::fs::write(dir.join("untracked/a.txt"), "a").unwrap();
+        std::fs::write(dir.join("untracked/b.txt"), "b").unwrap();
+        let sections = vec!["files".to_string()];
+        let summary = snapshot_sections(&location, Some(&sections), false).unwrap();
+        assert_eq!(summary.files.len(), 1);
+        assert_eq!(summary.files[0].path, "untracked/");
+        assert!(
+            summary.commits.is_empty() && summary.branches.is_empty() && summary.remotes.is_empty()
+        );
+        let expanded = snapshot_sections(&location, Some(&sections), true).unwrap();
+        assert_eq!(expanded.files.len(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn status_handles_renames_and_unicode() {
         let files = parse_status("R  新 名.txt\0old.txt\0 M src/main.rs\0?? new.txt\0");
         assert_eq!(files.len(), 3);
@@ -917,6 +1024,7 @@ mod tests {
         let detail = tauri::async_runtime::block_on(repository_detail(
             loc.clone(),
             data.commits[0].hash.clone(),
+            None,
         ))
         .unwrap();
         assert_eq!(detail.files[0].path, "你好.txt");
@@ -939,6 +1047,7 @@ mod tests {
             false,
             None,
             false,
+            None,
         ))
         .unwrap();
         assert!(diff.contains("+new line"));
