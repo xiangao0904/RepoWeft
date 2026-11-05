@@ -3503,6 +3503,23 @@ textarea,
   flex: 1;
   min-width: 0;
 }
+.commit-row-copy .commit-meta {
+  width: 100%;
+  min-width: 0;
+  min-height: 17px;
+}
+.commit-meta > .avatar,
+.commit-meta > code,
+.commit-meta > .meta-dot,
+.commit-meta > .commit-time {
+  flex-shrink: 0;
+}
+.commit-meta > .commit-author {
+  max-width: 140px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .commit-inline-refs {
   display: flex;
   align-items: center;
@@ -3510,18 +3527,18 @@ textarea,
   gap: 6px;
   flex: 0 1 auto;
   max-width: 55%;
-  min-width: max(0px, calc(var(--ref-gap) - 8px));
-  margin-left: calc(-1 * var(--ref-gap));
+  min-width: 0;
+  margin-left: 3px;
 }
 .commit-inline-refs > .branch-badge {
   min-width: 0;
   max-width: 180px;
   flex-shrink: 1;
-  height: 19px;
+  height: 17px;
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 10px;
-  line-height: 15px;
+  line-height: 13px;
   font-weight: 500;
 }
 .commit-inline-refs .ref-overflow {

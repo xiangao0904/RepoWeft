@@ -99,7 +99,12 @@ try {
               timestamp: Date.now() - i * 60000,
               refs:
                 i === window.qaHeadIndex
-                  ? ["HEAD -> refs/heads/main"]
+                  ? window.qaDenseRefs
+                    ? [
+                        "HEAD -> refs/heads/gpu-obj-instancing",
+                        "refs/remotes/origin/gpu-obj-instancing",
+                      ]
+                    : ["HEAD -> refs/heads/main"]
                   : i === 2
                     ? ["refs/heads/feature/navigation"]
                     : i === 5
@@ -240,7 +245,23 @@ try {
       .getBoundingClientRect();
     const list = document.querySelector(".commit-list").getBoundingClientRect();
     return {
-      ordered: node.right < label.x && label.right <= message.x,
+      ordered: node.right < message.x && label.y >= message.bottom,
+      titlesAligned: [
+        ...document.querySelectorAll(".commit-row-title > strong"),
+      ].every((el) => Math.abs(el.getBoundingClientRect().x - message.x) < 1),
+      metadataAligned:
+        Math.abs(
+          document
+            .querySelectorAll(".commit-row")[5]
+            .querySelector(".commit-meta")
+            .getBoundingClientRect().x - message.x,
+        ) < 1,
+      followsTime:
+        label.x >
+        document
+          .querySelectorAll(".commit-row")[5]
+          .querySelector(".commit-time")
+          .getBoundingClientRect().right,
       graphOffset: graph.x - list.x,
       titleOffset:
         document
@@ -250,7 +271,13 @@ try {
       rowHeight: row.height,
     };
   });
-  assert.ok(alignment.ordered, JSON.stringify(alignment));
+  assert.ok(
+    alignment.ordered &&
+      alignment.titlesAligned &&
+      alignment.metadataAligned &&
+      alignment.followsTime,
+    JSON.stringify(alignment),
+  );
   assert.equal(alignment.graphOffset, 0);
   assert.ok(alignment.titleOffset < 110, JSON.stringify(alignment));
   assert.equal(alignment.rowHeight, 44);
@@ -266,7 +293,53 @@ try {
     path: path.join(tmpdir(), "repoweft-history-refs-light.png"),
   });
   await page.evaluate(() => {
+    window.qaDenseRefs = true;
+  });
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.locator(".commit-row").first().locator(".ref-remote").waitFor();
+  const checkDenseRefs = async () => {
+    const result = await page.evaluate(() => {
+      const rows = [...document.querySelectorAll(".commit-row")];
+      const titleX = rows[0]
+        .querySelector(".commit-row-title")
+        .getBoundingClientRect().x;
+      return rows.every((row) => {
+        const title = row
+          .querySelector(".commit-row-title")
+          .getBoundingClientRect();
+        const meta = row.querySelector(".commit-meta").getBoundingClientRect();
+        return (
+          Math.abs(title.x - titleX) < 1 &&
+          row.getBoundingClientRect().height === 44 &&
+          [...row.querySelectorAll(".branch-badge")].every((badge) => {
+            const rect = badge.getBoundingClientRect();
+            return (
+              rect.y >= title.bottom &&
+              rect.right <= meta.right + 1 &&
+              rect.bottom <= row.getBoundingClientRect().bottom
+            );
+          })
+        );
+      });
+    });
+    assert.ok(
+      result,
+      "Dense branch references must stay on the metadata line without shifting titles",
+    );
+  };
+  await checkDenseRefs();
+  await page
+    .locator(".history-panel")
+    .screenshot({
+      animations: "disabled",
+      path: path.join(tmpdir(), "repoweft-history-metadata-light.png"),
+    });
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  await checkDenseRefs();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.evaluate(() => {
     document.documentElement.dataset.theme = "dark";
+    window.qaDenseRefs = false;
     window.qaHeadIndex = 3;
   });
   await page.getByRole("button", { name: "Refresh", exact: true }).click();

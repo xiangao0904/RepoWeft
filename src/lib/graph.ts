@@ -12,7 +12,7 @@ export const graphRowHeight = 70;
 // Track pending parents in stable lanes. Missing parents continue to the next page.
 export function layoutGraph(commits: Commit[]) {
   const lanes: (string | null)[] = [];
-  const points: { lane: number; color: string; rightmostLane: number }[] = [];
+  const points: { lane: number; color: string }[] = [];
   const edges: {
     from: number;
     to: number;
@@ -29,10 +29,6 @@ export function layoutGraph(commits: Commit[]) {
       lane = lanes.indexOf(null);
       if (lane < 0) lane = lanes.length;
     }
-    let rightmostLane = lane;
-    lanes.forEach((hash, index) => {
-      if (hash !== null) rightmostLane = Math.max(rightmostLane, index);
-    });
     lanes[lane] = null;
     const color = graphColors[lane % graphColors.length];
     maxLane = Math.max(maxLane, lane);
@@ -53,10 +49,7 @@ export function layoutGraph(commits: Commit[]) {
         color: graphColors[targetLane % graphColors.length],
       });
     });
-    lanes.forEach((hash, index) => {
-      if (hash !== null) rightmostLane = Math.max(rightmostLane, index);
-    });
-    points.push({ lane, color, rightmostLane });
+    points.push({ lane, color });
   }
   return {
     points,
