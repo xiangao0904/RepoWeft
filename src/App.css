@@ -994,6 +994,13 @@ kbd {
 .workspace-filters > .search-field {
   width: 235px;
 }
+.workspace-filters > .segmented {
+  flex-shrink: 0;
+}
+.workspace-filters > .segmented button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .demo-link {
   margin: 20px auto;
   display: flex;
