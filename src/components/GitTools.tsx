@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import { errorText, useI18n, type MessageKey } from "../lib/i18n";
 import { gitService } from "../services/git";
+import { QuickCommitInput } from "./QuickCommitInput";
 import { Modal } from "./ui";
 
 type Run = (
@@ -296,6 +297,26 @@ export function CommitActions({
       </Modal>
     );
   }
+  if (needsValue)
+    return (
+      <QuickCommitInput
+        title={t(options.find(([action]) => action === kind)![1])}
+        hash={commit.hash}
+        value={value}
+        placeholder={t(
+          kind === "createTag"
+            ? "tagNameInput"
+            : kind === "createBranch"
+              ? "branchName"
+              : "commitSummary",
+        )}
+        multiline={kind === "reword"}
+        busy={locked}
+        onChange={setValue}
+        onSubmit={() => void submit()}
+        onClose={onClose}
+      />
+    );
   return (
     <Modal
       key="edit-commit"
@@ -314,8 +335,7 @@ export function CommitActions({
             void submit();
           }}
         >
-          {kind !== "reword" && <p>{t(kind === "reset" ? "resetWarning" : "historyWarning")}</p>}
-          {needsValue && <textarea required autoFocus aria-label={t("actionValue")} value={value} onChange={e => setValue(e.target.value)} rows={kind === "reword" ? 5 : 2} />}
+          <p>{t(kind === "reset" ? "resetWarning" : "historyWarning")}</p>
           {kind === "reset" && (
             <select
               aria-label={t("resetMode")}

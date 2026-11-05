@@ -1,6 +1,9 @@
 import { createContext, useContext } from "react";
 
 export const en = {
+  tagNameInput: "Tag name",
+  quickNameKeys: "Enter to confirm · Esc to cancel",
+  quickCommitKeys: "Ctrl/⌘+Enter to save · Esc to cancel",
   publishedRewordTitle: "Push edited commit?",
   publishedRewordPrompt:
     "The commit message has been updated locally. This commit was already published. Force push the rewritten history to the selected remote branch? The push will be rejected if the remote has changed.",
@@ -442,6 +445,9 @@ export const en = {
 export type MessageKey = keyof typeof en;
 export type Locale = "en" | "zh-CN";
 export const zh: Record<MessageKey, string> = {
+  tagNameInput: "标签名称",
+  quickNameKeys: "Enter 确认 · Esc 取消",
+  quickCommitKeys: "Ctrl/⌘+Enter 保存 · Esc 取消",
   publishedRewordTitle: "是否推送修改后的提交？",
   publishedRewordPrompt:
     "提交说明已在本地修改。此提交之前已经推送，是否将改写后的历史强制推送到所选远程分支？如果远程发生了变化，推送会被拒绝。",

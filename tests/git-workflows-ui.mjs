@@ -62,6 +62,7 @@ try {
     localStorage.setItem("repoweft.v1.accountsWelcomeSeen", "true");
     const hash = "1".repeat(40);
     window.qaHeadIndex = 0;
+    window.qaPublished = true;
     window.qaActions = [];
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -166,6 +167,20 @@ try {
             ].includes(args.action.kind)
           )
             window.qaConflict = false;
+          if (args.action.kind === "reword")
+            return JSON.stringify({
+              head: "a".repeat(40),
+              branch: "main",
+              targets: window.qaPublished
+                ? [
+                    {
+                      remote: "origin",
+                      target: "refs/heads/main",
+                      expected: "6".repeat(40),
+                    },
+                  ]
+                : [],
+            });
           return "ok";
         }
         if (command === "repository_conflict")
@@ -403,12 +418,10 @@ try {
     animations: "disabled",
     path: path.join(tmpdir(), "repoweft-commit-context-menu.png"),
   });
-  await page
-    .locator(".history-panel")
-    .screenshot({
-      animations: "disabled",
-      path: path.join(tmpdir(), "repoweft-commit-context-menu-preview.png"),
-    });
+  await page.locator(".history-panel").screenshot({
+    animations: "disabled",
+    path: path.join(tmpdir(), "repoweft-commit-context-menu-preview.png"),
+  });
   await page.mouse.click(230, 115);
   assert.equal(await page.getByRole("menu").count(), 0);
   await firstRow.focus();
@@ -446,17 +459,78 @@ try {
   await page.locator(".commit-list-scroll").dispatchEvent("scroll");
   assert.equal(await page.getByRole("menu").count(), 0);
   await firstRow.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Create tag here…" }).click();
+  assert.equal(await page.locator(".modal-backdrop").count(), 0);
+  assert.equal(
+    await page.locator(".quick-commit-input").getAttribute("aria-modal"),
+    "false",
+  );
+  await page
+    .getByRole("textbox", { name: "Name or commit message" })
+    .fill("v0.2.0");
+  await page.screenshot({
+    animations: "disabled",
+    path: path.join(tmpdir(), "repoweft-quick-tag-context.png"),
+  });
+  await page
+    .locator(".quick-commit-input")
+    .screenshot({
+      animations: "disabled",
+      path: path.join(tmpdir(), "repoweft-quick-tag.png"),
+    });
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() =>
+    window.qaActions.some((a) => a.kind === "createTag"),
+  );
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.qaActions.find((a) => a.kind === "createTag"),
+    ),
+    { kind: "createTag", value: "v0.2.0", extra: "1".repeat(40) },
+  );
+  await page.locator(".quick-commit-input").waitFor({ state: "hidden" });
+  await firstRow.click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Create branch here…" }).click();
+  await page
+    .getByRole("textbox", { name: "Name or commit message" })
+    .fill("feature/cancelled");
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".quick-commit-input").count(), 0);
+  assert.equal(
+    await page.evaluate(
+      () => window.qaActions.filter((a) => a.kind === "createBranch").length,
+    ),
+    0,
+  );
+  await firstRow.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Edit commit message" }).click();
+  assert.equal(await page.locator(".modal-backdrop").count(), 0);
+  await page.screenshot({
+    animations: "disabled",
+    path: path.join(tmpdir(), "repoweft-quick-reword-context.png"),
+  });
+  await page
+    .locator(".quick-commit-input")
+    .screenshot({
+      animations: "disabled",
+      path: path.join(tmpdir(), "repoweft-quick-reword.png"),
+    });
   assert.equal(
     await page
       .getByRole("textbox", { name: "Name or commit message" })
       .inputValue(),
     "Initial commit\n\nPreserve body",
   );
+  assert.equal(
+    await page.locator(".git-operation-dialog > form > p").count(),
+    0,
+  );
   await page
     .getByRole("textbox", { name: "Name or commit message" })
     .fill("Reworded\n\nFull body");
-  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Name or commit message" })
+    .press("Control+Enter");
   await page.waitForFunction(() =>
     window.qaActions.some((a) => a.kind === "reword"),
   );
@@ -466,6 +540,71 @@ try {
     ),
     "1".repeat(40),
   );
+  await page.getByRole("dialog", { name: "Push edited commit?" }).waitFor();
+  assert.equal(
+    await page.evaluate(
+      () => window.qaActions.filter((a) => a.kind === "forcePush").length,
+    ),
+    0,
+  );
+  await page.screenshot({
+    animations: "disabled",
+    path: path.join(tmpdir(), "repoweft-reword-force-push.png"),
+  });
+  await page
+    .getByRole("button", { name: "Keep local only", exact: true })
+    .click();
+  assert.equal(await page.getByRole("dialog").count(), 0);
+  assert.equal(
+    await page.evaluate(
+      () => window.qaActions.filter((a) => a.kind === "forcePush").length,
+    ),
+    0,
+  );
+  const editAgain = async () => {
+    await firstRow.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Edit commit message" }).click();
+    await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  };
+  await editAgain();
+  await page
+    .getByRole("dialog", { name: "Push edited commit?" })
+    .getByRole("button", { name: "Force push with lease", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    window.qaActions.some((a) => a.kind === "forcePush"),
+  );
+  const pushed = await page.evaluate(() =>
+    window.qaActions.find((a) => a.kind === "forcePush"),
+  );
+  assert.deepEqual(pushed.lease, {
+    remote: "origin",
+    target: "refs/heads/main",
+    expected: "6".repeat(40),
+  });
+  assert.equal(pushed.expectedHead, "a".repeat(40));
+  assert.equal(pushed.expectedBranch, "main");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page.evaluate(() => {
+    window.qaPublished = false;
+  });
+  const editsBefore = await page.evaluate(
+    () => window.qaActions.filter((a) => a.kind === "reword").length,
+  );
+  await editAgain();
+  await page.waitForFunction(
+    (count) =>
+      window.qaActions.filter((a) => a.kind === "reword").length > count,
+    editsBefore,
+  );
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  assert.equal(
+    await page.getByRole("dialog", { name: "Push edited commit?" }).count(),
+    0,
+  );
+  const pushesBefore = await page.evaluate(
+    () => window.qaActions.filter((a) => a.kind === "forcePush").length,
+  );
   await page
     .getByRole("button", { name: "Force push with lease", exact: true })
     .click();
@@ -473,11 +612,13 @@ try {
     await page.evaluate(
       () => window.qaActions.filter((a) => a.kind === "forcePush").length,
     ),
-    0,
+    pushesBefore,
   );
   await page.getByRole("button", { name: "Confirm", exact: true }).click();
-  await page.waitForFunction(() =>
-    window.qaActions.some((a) => a.kind === "forcePush"),
+  await page.waitForFunction(
+    (count) =>
+      window.qaActions.filter((a) => a.kind === "forcePush").length > count,
+    pushesBefore,
   );
   await page
     .getByRole("button", { name: "Check push access", exact: true })

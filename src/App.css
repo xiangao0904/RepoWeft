@@ -3869,3 +3869,74 @@ textarea,
   margin: 0;
   overflow-wrap: anywhere;
 }
+
+.quick-commit-input {
+  position: fixed;
+  z-index: 900;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  padding: 6px 8px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  box-shadow: 0 8px 32px #0005;
+}
+.quick-commit-input > header {
+  display: flex;
+  align-items: center;
+  min-height: 25px;
+  gap: 10px;
+  padding: 0 1px 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.quick-commit-input > header > span {
+  flex: 1;
+}
+.quick-commit-input > header > code {
+  color: var(--subtle);
+  font-size: 10px;
+}
+.quick-commit-input > header .icon-button {
+  width: 22px;
+  height: 22px;
+}
+.quick-commit-input > input,
+.quick-commit-input > textarea {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+  max-height: 40vh;
+}
+.quick-commit-input > input:focus,
+.quick-commit-input > textarea:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+.quick-commit-input > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 7px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.quick-input-submit {
+  height: 25px;
+  padding: 0 10px;
+  border-radius: 4px;
+  background: var(--accent-solid);
+  color: #fff;
+  font-size: 11px;
+}
