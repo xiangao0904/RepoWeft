@@ -1,6 +1,10 @@
 import { createContext, useContext } from "react";
 
 export const en = {
+  workspaceTags: "Tags",
+  workspaceStashes: "Stashes",
+  tagsEmptyHint: "Right-click a commit to create a tag.",
+  stashesEmptyHint: "Save current changes here to restore them later.",
   commitCountHint:
     "Total commits in this history scope, including commits not loaded yet",
   commitCountFailed: "Count unavailable",
@@ -454,6 +458,10 @@ export const en = {
 export type MessageKey = keyof typeof en;
 export type Locale = "en" | "zh-CN";
 export const zh: Record<MessageKey, string> = {
+  workspaceTags: "标签",
+  workspaceStashes: "暂存栈",
+  tagsEmptyHint: "右键点击提交，即可创建标签。",
+  stashesEmptyHint: "将当前改动存到这里，以后随时恢复。",
   commitCountHint: "当前历史范围的提交总数，包含尚未加载的提交",
   commitCountFailed: "暂时无法统计提交数",
   rewordOperationActive: "请先完成或中止当前的 Git 操作，再修改提交说明。",

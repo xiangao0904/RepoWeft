@@ -3547,18 +3547,159 @@ textarea,
   flex-shrink: 0;
 }
 .workspace-tools {
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--border);
-  max-height: 240px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+}
+.workspace-tool-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.workspace-tool-button:hover,
+.workspace-tool-button[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.workspace-tool-count {
+  color: var(--subtle);
+  font-size: 10px;
+}
+.workspace-popover {
+  position: fixed;
+  z-index: 150;
+  width: min(360px, calc(100vw - 16px));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 8px 30px #0003;
   overflow: auto;
+}
+.workspace-popover > header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.workspace-popover > header strong {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 550;
+}
+.workspace-popover .icon-button {
+  width: 26px;
+  height: 26px;
   flex-shrink: 0;
 }
-.workspace-tools summary {
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
+.workspace-remote {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 11px;
 }
-.workspace-tools button,
+.workspace-remote select {
+  min-width: 110px;
+  max-width: 200px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+}
+.workspace-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 25px 18px;
+  color: var(--muted);
+  text-align: center;
+}
+.workspace-empty > svg {
+  color: var(--subtle);
+  margin-bottom: 2px;
+}
+.workspace-empty strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+.workspace-empty span {
+  font-size: 11px;
+  line-height: 1.6;
+}
+.workspace-entry {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 12px;
+  min-height: 44px;
+  border-top: 1px solid var(--border-soft);
+}
+.workspace-entry > svg {
+  color: var(--subtle);
+  flex-shrink: 0;
+}
+.workspace-entry code,
+.workspace-stash-entry > code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.workspace-text-action {
+  color: var(--muted);
+  font-size: 10px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.workspace-text-action:hover {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+.workspace-stash-entry {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  min-height: 66px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-soft);
+}
+.workspace-stash-entry > code {
+  flex: none;
+}
+.workspace-stash-entry > div {
+  display: flex;
+  gap: 6px;
+}
+.workspace-publish {
+  padding: 4px 12px 12px;
+}
+.workspace-publish .workspace-remote {
+  padding: 8px 0 12px;
+}
+.workspace-publish .primary-button {
+  width: 100%;
+  font-size: 12px;
+}
 .operation-banner button,
 .conflict-choices button {
   border: 1px solid var(--border);
@@ -3569,16 +3710,6 @@ textarea,
   color: inherit;
   cursor: pointer;
   font-size: 11px;
-}
-.tool-entry {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.tool-entry code {
-  overflow-wrap: anywhere;
-  flex: 1;
 }
 .operation-banner {
   display: flex;
@@ -3939,4 +4070,19 @@ textarea,
   background: var(--accent-solid);
   color: #fff;
   font-size: 11px;
+}
+
+.history-panel {
+  container-type: inline-size;
+}
+@container (max-width: 640px) {
+  .workspace-tool-button > span:not(.workspace-tool-count) {
+    display: none;
+  }
+}
+.workspace-popover > header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-raised);
 }

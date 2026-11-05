@@ -63,6 +63,9 @@ try {
     const hash = "1".repeat(40);
     window.qaHeadIndex = 0;
     window.qaPublished = true;
+    window.qaTags = ["v1"];
+    window.qaStashes = [];
+    window.qaFailCount = false;
     window.qaActions = [];
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -149,12 +152,15 @@ try {
             remotes: [
               { name: "origin", url: "https://github.com/owner/repo.git" },
             ],
-            tags: ["v1"],
-            stashes: [],
+            tags: window.qaTags,
+            stashes: window.qaStashes,
             tracking: { ahead: 2, behind: 1 },
             operation: window.qaConflict ? "merge" : null,
           };
-        if (command === "repository_commit_count") return 8;
+        if (command === "repository_commit_count") {
+          if (window.qaFailCount) throw "Count read failed";
+          return 8;
+        }
         if (command === "repository_detail")
           return { message: "Initial commit\n\nPreserve body", files: [] };
         if (command === "repository_action") {
@@ -203,7 +209,111 @@ try {
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.locator(".sidebar-repo").first().click();
   await page.locator(".commit-row").first().waitFor();
-  await page.waitForFunction(() => document.querySelector(".history-count")?.textContent.includes("8 commits"));
+  await page.waitForFunction(() =>
+    document.querySelector(".history-count")?.textContent.includes("8 commits"),
+  );
+  assert.equal(await page.locator("details.workspace-tools").count(), 0);
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Publish current branch", exact: true })
+      .count(),
+    0,
+  );
+  const firstRowY = (await page.locator(".commit-row").first().boundingBox()).y;
+  await page.getByRole("button", { name: "Tags 1", exact: true }).click();
+  await page.getByRole("dialog", { name: "Tags", exact: true }).waitFor();
+  assert.equal(
+    (await page.locator(".commit-row").first().boundingBox()).y,
+    firstRowY,
+  );
+  await page
+    .getByRole("dialog", { name: "Tags", exact: true })
+    .getByRole("button", { name: "Push", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    window.qaActions.some((a) => a.kind === "pushTag"),
+  );
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.qaActions.find((a) => a.kind === "pushTag"),
+    ),
+    { kind: "pushTag", value: "v1", extra: "origin" },
+  );
+  await page.locator(".workspace-popover").waitFor({ state: "hidden" });
+  await page.evaluate(() => {
+    window.qaTags = [];
+  });
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByRole("button", { name: "Tags 0", exact: true }).click();
+  assert.match(await page.locator(".workspace-empty").innerText(), /No tags/);
+  assert.equal(await page.locator(".workspace-popover select").count(), 0);
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+  });
+  await page.locator(".history-panel").screenshot({
+    animations: "disabled",
+    path: path.join(tmpdir(), "repoweft-workspace-tools.png"),
+  });
+  await page.getByRole("button", { name: "Stashes 0", exact: true }).click();
+  assert.match(
+    await page.locator(".workspace-empty").innerText(),
+    /No stashes/,
+  );
+  assert.equal(
+    await page
+      .getByRole("button", {
+        name: "Stash changes including untracked files",
+        exact: true,
+      })
+      .isDisabled(),
+    true,
+  );
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".workspace-popover").count(), 0);
+  await page.setViewportSize({ width: 1100, height: 1000 });
+  const toolbarFits = await page
+    .locator(".history-filters")
+    .evaluate((node) => node.scrollWidth <= node.clientWidth + 1);
+  assert.ok(toolbarFits, "Workspace tools must fit the narrow history toolbar");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "dark";
+    window.qaTags = ["v1"];
+    window.qaStashes = ["stash@{0}: On main: Saved changes"];
+    window.qaFailCount = true;
+  });
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.waitForFunction(() =>
+    document
+      .querySelector(".history-count")
+      ?.textContent.includes("Count unavailable"),
+  );
+  await page.evaluate(() => {
+    window.qaFailCount = false;
+  });
+  await page
+    .locator(".panel-footer")
+    .getByRole("button", { name: "Retry", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    document.querySelector(".history-count")?.textContent.includes("8 commits"),
+  );
+  await page.getByRole("button", { name: "Stashes 1", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Stashes", exact: true })
+    .getByRole("button", { name: "Apply stash", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    window.qaActions.some((a) => a.kind === "stashApply"),
+  );
+  assert.equal(
+    await page.evaluate(
+      () => window.qaActions.find((a) => a.kind === "stashApply").value,
+    ),
+    "stash@{0}",
+  );
+  await page.locator(".workspace-popover").waitFor({ state: "hidden" });
+
   assert.equal(await page.locator(".ref-legend").count(), 0);
   assert.equal(
     await page
@@ -459,7 +569,7 @@ try {
       edgeBounds.y + edgeBounds.height <= 992,
   );
   await page.locator(".commit-list-scroll").dispatchEvent("scroll");
-  assert.equal(await page.getByRole("menu").count(), 0);
+  await page.getByRole("menu").waitFor({ state: "hidden" });
   await firstRow.click({ button: "right" });
   await page.getByRole("menuitem", { name: "Create tag here…" }).click();
   assert.equal(await page.locator(".modal-backdrop").count(), 0);
@@ -474,12 +584,10 @@ try {
     animations: "disabled",
     path: path.join(tmpdir(), "repoweft-quick-tag-context.png"),
   });
-  await page
-    .locator(".quick-commit-input")
-    .screenshot({
-      animations: "disabled",
-      path: path.join(tmpdir(), "repoweft-quick-tag.png"),
-    });
+  await page.locator(".quick-commit-input").screenshot({
+    animations: "disabled",
+    path: path.join(tmpdir(), "repoweft-quick-tag.png"),
+  });
   await page.keyboard.press("Enter");
   await page.waitForFunction(() =>
     window.qaActions.some((a) => a.kind === "createTag"),
@@ -511,12 +619,10 @@ try {
     animations: "disabled",
     path: path.join(tmpdir(), "repoweft-quick-reword-context.png"),
   });
-  await page
-    .locator(".quick-commit-input")
-    .screenshot({
-      animations: "disabled",
-      path: path.join(tmpdir(), "repoweft-quick-reword.png"),
-    });
+  await page.locator(".quick-commit-input").screenshot({
+    animations: "disabled",
+    path: path.join(tmpdir(), "repoweft-quick-reword.png"),
+  });
   assert.equal(
     await page
       .getByRole("textbox", { name: "Name or commit message" })

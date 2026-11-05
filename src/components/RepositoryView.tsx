@@ -50,7 +50,8 @@ import { CommitGraph } from "./CommitGraph";
 import { githubRepository } from "../lib/avatars";
 import { layoutGraph } from "../lib/graph";
 
-import { CommitActions, ConflictEditor, OperationStatus, WorkspaceTools } from "./GitTools";
+import { CommitActions, ConflictEditor, OperationStatus } from "./GitTools";
+import { WorkspaceTools } from "./WorkspaceTools";
 import { conflicted } from "../lib/changes";
 import { useStored } from "../lib/storage";
 
@@ -480,7 +481,6 @@ function History(props: RepoViewProps) {
       )}
       <div className="repository-center-column">
         <OperationStatus {...props} />
-        <WorkspaceTools {...props} />
         {!selected &&
           workingDiff &&
           (data.files.some(
@@ -571,6 +571,7 @@ function History(props: RepoViewProps) {
                 onChange={(e) => setQuery(e.target.value)}
               />
             </div>
+            <WorkspaceTools {...props} />
           </div>
           <div
             ref={scrollRef}
