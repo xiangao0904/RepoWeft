@@ -3260,7 +3260,7 @@ textarea,
   flex: 1 1 80px;
   min-height: 60px;
   overflow-y: auto;
-  scrollbar-width: thin;
+  scrollbar-width: auto;
 }
 .workspace-switcher .sidebar-section-title {
   position: sticky;
@@ -3314,4 +3314,16 @@ textarea,
 .history-main-diff > header > .diff-close {
   margin-left: auto;
   flex-shrink: 0;
+}
+
+.sidebar .workspace-switcher::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.sidebar .workspace-switcher::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+.sidebar .workspace-switcher::-webkit-scrollbar-track {
+  background: transparent;
 }
