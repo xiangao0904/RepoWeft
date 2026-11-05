@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useI18n, errorText } from "../lib/i18n";
+import { isReadCancelled } from "../lib/requests";
+import { DiffPages, pagesInRange } from "../lib/diffPages";
+import type { DiffSource } from "../types";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { windowRange } from "../lib/windowing";
 
 // Large auxiliary lists get their own bounded viewport. Small lists retain natural sizing.
@@ -68,39 +72,50 @@ export function VirtualList<T>({
 }
 
 export function VirtualDiff({
-  text,
+  source,
   compact,
 }: {
-  text: string;
+  source: DiffSource;
   compact: boolean;
 }) {
+  const { t } = useI18n();
   const root = useRef<HTMLDivElement>(null);
+  const pre = useRef<HTMLPreElement>(null);
   const [viewport, setViewport] = useState({ top: 0, height: 800 });
-  // Store offsets instead of one additional string per line for large patches.
-  const source = useMemo(() => {
-    let count = 1;
-    for (let i = 0; i < text.length; i++)
-      if (text.charCodeAt(i) === 10) count++;
-    const offsets = new Uint32Array(count);
-    let line = 1;
-    for (let i = 0; i < text.length; i++)
-      if (text.charCodeAt(i) === 10) offsets[line++] = i + 1;
-    return offsets;
-  }, [text]);
+  const [pages] = useState(() => new DiffPages());
+  const [, updatePages] = useState(0);
+  const [retry, setRetry] = useState(0);
+  const [error, setError] = useState("");
   const width = useRef(0);
-  useEffect(() => {
-    width.current = 0;
-    if (root.current) root.current.scrollTop = 0;
-    setViewport((v) => ({ ...v, top: 0 }));
-  }, [text]);
-  useEffect(() => {
-    const pre = root.current?.firstElementChild as HTMLElement | null;
-    if (pre) {
-      width.current = Math.max(width.current, pre.scrollWidth);
-      pre.style.minWidth = `${width.current}px`;
-    }
-  });
   const rowHeight = compact ? 20 : 24;
+  const { start, end } = windowRange(
+    source.totalLines,
+    viewport.top,
+    viewport.height,
+    rowHeight,
+  );
+  const required = pagesInRange(start, end, source.pageSize);
+  const pageKey = required.join(",");
+  useEffect(() => {
+    const controller = new AbortController();
+    pages.require(required);
+    setError("");
+    for (const page of required) {
+      if (pages.get(page)) continue;
+      void source
+        .readPage(page, controller.signal)
+        .then((value) => {
+          if (controller.signal.aborted) return;
+          pages.put(page, value);
+          updatePages((version) => version + 1);
+        })
+        .catch((error) => {
+          if (!controller.signal.aborted && !isReadCancelled(error))
+            setError(errorText(error, t));
+        });
+    }
+    return () => controller.abort();
+  }, [source, pageKey, retry, t]);
   useEffect(() => {
     const element = root.current!;
     const observer = new ResizeObserver(() =>
@@ -109,50 +124,63 @@ export function VirtualDiff({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-  const { start, end } = windowRange(
-    source.length,
-    viewport.top,
-    viewport.height,
-    rowHeight,
-  );
+  useEffect(() => {
+    if (!pre.current) return;
+    width.current = Math.max(width.current, pre.current.scrollWidth);
+    pre.current.style.minWidth = `${width.current}px`;
+  });
+  const loading = required.some((page) => !pages.get(page));
   return (
     <div
       ref={root}
       className={`diff-view ${compact ? "compact" : ""}`}
+      aria-busy={loading}
       onScroll={(event) => {
         const top =
           Math.floor(event.currentTarget.scrollTop / rowHeight) * rowHeight;
         setViewport((v) => (v.top === top ? v : { ...v, top }));
       }}
     >
+      {error && (
+        <div className="diff-page-error" role="alert">
+          <span>{error}</span>
+          <button
+            className="text-button"
+            onClick={() => setRetry((value) => value + 1)}
+          >
+            {t("retry")}
+          </button>
+        </div>
+      )}
       <pre
+        ref={pre}
         style={{
           paddingTop: 10 + start * rowHeight,
-          paddingBottom: 10 + (source.length - end) * rowHeight,
+          paddingBottom: 10 + (source.totalLines - end) * rowHeight,
         }}
       >
-        {Array.from(source.subarray(start, end), (offset, index) => {
+        {Array.from({ length: end - start }, (_, index) => {
           const i = start + index;
-          const line = text.slice(
-            offset,
-            i + 1 < source.length ? source[i + 1] - 1 : text.length,
-          );
+          const page = pages.get(Math.floor(i / source.pageSize));
+          const line = page?.lines[i - page.start];
           return (
             <div
               key={i}
               style={{ height: rowHeight }}
               className={
-                line.startsWith("+")
-                  ? "diff-add"
-                  : line.startsWith("-")
-                    ? "diff-remove"
-                    : line.startsWith("@@")
-                      ? "diff-hunk"
-                      : ""
+                line && line.kind !== "context" ? `diff-${line.kind}` : ""
               }
             >
               <span className="line-number">{i + 1}</span>
-              <span>{line || " "}</span>
+              <span>
+                {line ? (
+                  line.text || " "
+                ) : (
+                  <span className="subtle" aria-label={t("working")}>
+                    …
+                  </span>
+                )}
+              </span>
             </div>
           );
         })}

@@ -188,6 +188,10 @@ export const en = {
   clean: "All caught up.",
   cleanDescription: "Your working tree is clean. Time for your next idea.",
   selectFile: "Select a file to view its changes",
+  diffTooLarge: "This diff exceeds the 16 MiB preview limit.",
+  diffPreviewLimit: "Close another diff preview before opening this one.",
+  diffClosed: "This preview was closed. Select the file again to reopen it.",
+  diffLoadFailed: "Could not load this part of the diff. Try again.",
   noDiff: "No text diff available. The file may be binary or unchanged.",
   commitSummary: "Summary of your changes",
   commitDescription: "Add a description (optional)",
@@ -500,6 +504,10 @@ export const zh: Record<MessageKey, string> = {
   clean: "一切就绪。",
   cleanDescription: "工作目录很干净，开始下一个灵感吧。",
   selectFile: "选择一个文件，查看具体变更",
+  diffTooLarge: "这份差异超过了 16 MiB 的预览上限。",
+  diffPreviewLimit: "请先关闭另一份差异预览，再打开此文件。",
+  diffClosed: "这份预览已关闭，请重新选择文件。",
+  diffLoadFailed: "这部分差异暂时无法加载，请重试。",
   noDiff: "没有可显示的文本差异，文件可能是二进制文件或没有变更。",
   commitSummary: "简要说明这次修改",
   commitDescription: "补充详细说明（可选）",
@@ -647,6 +655,16 @@ export function errorText(
 ): string {
   const message = error instanceof Error ? error.message : String(error);
   switch (message) {
+    case "DIFF_TOO_LARGE":
+      return t("diffTooLarge");
+    case "DIFF_LIMIT":
+      return t("diffPreviewLimit");
+    case "DIFF_CLOSED":
+      return t("diffClosed");
+    case "DIFF_INVALID_PAGE":
+    case "DIFF_SESSION_EXISTS":
+    case "DIFF_INVALID_SESSION":
+      return t("diffLoadFailed");
     case "ACCOUNT_CREDENTIAL_CHANGED":
       return t("accountCredentialChanged");
     case "ACCOUNT_REAUTHORIZE":

@@ -37,11 +37,12 @@ import type {
   Action,
   Commit,
   CommitDetail,
+  DiffSource,
   FileChange,
   Repository,
   Snapshot,
 } from "../types";
-import { relativeTime, useI18n, type MessageKey } from "../lib/i18n";
+import { relativeTime, useI18n, errorText, type MessageKey } from "../lib/i18n";
 import { gitService } from "../services/git";
 import { Avatar, Splitter, BranchBadge, Empty } from "./ui";
 import { CommitGraph } from "./CommitGraph";
@@ -745,21 +746,23 @@ function Diff({
   compact?: boolean;
 }) {
   const { t } = useI18n();
-  const [text, setText] = useState("");
+  const [source, setSource] = useState<DiffSource | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     setLoading(true);
+    setSource(null);
     setError("");
     gitService
-      .diff(repo, path, staged, hash, untracked, controller.signal)
+      .openDiff(repo, path, staged, hash, untracked, controller.signal)
       .then((result) => {
-        if (!cancelled) setText(result);
+        if (!cancelled) setSource(result);
+        else result.close();
       })
       .catch((e) => {
-        if (!cancelled) setError(String(e));
+        if (!cancelled && !isReadCancelled(e)) setError(errorText(e, t));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -768,7 +771,7 @@ function Diff({
       cancelled = true;
       controller.abort();
     };
-  }, [repo, path, staged, hash, untracked]);
+  }, [repo, path, staged, hash, untracked, t]);
   if (loading)
     return (
       <div className="diff-loading">
@@ -776,8 +779,9 @@ function Diff({
       </div>
     );
   if (error) return <p className="inline-error">{error}</p>;
-  if (!text) return <Empty icon={<FileCode2 />} title={t("noDiff")} />;
-  return <VirtualDiff text={text} compact={compact} />;
+  if (!source?.totalLines)
+    return <Empty icon={<FileCode2 />} title={t("noDiff")} />;
+  return <VirtualDiff key={source.id} source={source} compact={compact} />;
 }
 
 function Changes({
@@ -951,7 +955,7 @@ function Changes({
         </form>
       </div>
       <section className="file-diff-panel" hidden={Boolean(onPreview)}>
-        {selected ? (
+        {selected && !onPreview ? (
           <>
             <header>
               <FileCode2 size={16} />

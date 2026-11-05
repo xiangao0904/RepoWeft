@@ -7,6 +7,9 @@ import type {
   DirectoryEntry,
   Commit,
   CommitDetail,
+  DiffDocument,
+  DiffPage,
+  DiffSource,
   Repository,
   Snapshot,
   SSHHost,
@@ -18,6 +21,7 @@ export const desktop = isTauri();
 let sample: Snapshot = structuredClone(demoSnapshot);
 
 const reads = new ReadRequests();
+const diffClosers = new Map<string, Set<() => void>>();
 const snapshots = new BudgetCache<Snapshot>(
   16 * 1024 * 1024,
   300_000,
@@ -183,7 +187,9 @@ export const gitService = {
     return snapshots.get(repoKey(repo));
   },
   cancelReads(repo: Repository) {
-    reads.cancel(repoKey(repo));
+    const scope = repoKey(repo);
+    reads.cancel(scope);
+    for (const close of [...(diffClosers.get(scope) ?? [])]) close();
     const data = snapshots.get(repoKey(repo));
     if (data) cancelGithubAvatars(data.remotes.map((remote) => remote.url));
   },
@@ -299,28 +305,95 @@ export const gitService = {
     details.set(key, value);
     return value;
   },
-  async diff(
+  async openDiff(
     repo: Repository,
     path: string,
     staged: boolean,
     hash?: string,
     untracked = false,
     signal?: AbortSignal,
-  ): Promise<string> {
-    return repo.demo
-      ? demoDiff.replaceAll("src/train.py", path)
-      : readCall<string>(
-          repo,
-          "repository_diff",
-          {
-            location: repo.location,
-            path,
-            staged,
-            hash: hash ?? null,
-            untracked,
-          },
-          signal,
-        );
+  ): Promise<DiffSource> {
+    signal?.throwIfAborted();
+    const sessionId = crypto.randomUUID();
+    const scope = repoKey(repo);
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      signal?.removeEventListener("abort", close);
+      const closers = diffClosers.get(scope);
+      closers?.delete(close);
+      if (!closers?.size) diffClosers.delete(scope);
+      if (!repo.demo)
+        void invoke("repository_diff_close", { sessionId }).catch(() => {});
+    };
+    const closers = diffClosers.get(scope) ?? new Set<() => void>();
+    closers.add(close);
+    diffClosers.set(scope, closers);
+    signal?.addEventListener("abort", close, { once: true });
+    try {
+      // The bundled demo is small and intentionally works without the native backend.
+      const demoLines = repo.demo
+        ? demoDiff
+            .replaceAll("src/train.py", path)
+            .split("\n")
+            .map((text) => ({
+              text,
+              kind: text.startsWith("+")
+                ? ("add" as const)
+                : text.startsWith("-")
+                  ? ("remove" as const)
+                  : text.startsWith("@@")
+                    ? ("hunk" as const)
+                    : ("context" as const),
+            }))
+        : null;
+      const demoPage = (page: number): DiffPage => ({
+        start: page * 128,
+        lines: demoLines!.slice(page * 128, (page + 1) * 128),
+      });
+      const document = repo.demo
+        ? {
+            id: sessionId,
+            totalLines: demoLines!.length,
+            pageSize: 128,
+          }
+        : await readCall<DiffDocument>(
+            repo,
+            "repository_diff_open",
+            {
+              diff: {
+                location: repo.location,
+                path,
+                staged,
+                hash: hash ?? null,
+                untracked,
+              },
+              sessionId,
+            },
+            signal,
+          );
+      if (closed) throw new DOMException("Cancelled", "AbortError");
+      return {
+        ...document,
+        readPage: (page, pageSignal) => {
+          if (closed || pageSignal?.aborted)
+            return Promise.reject(new DOMException("Cancelled", "AbortError"));
+          return repo.demo
+            ? Promise.resolve(demoPage(page))
+            : readCall<DiffPage>(
+                repo,
+                "repository_diff_page",
+                { sessionId, page },
+                pageSignal,
+              );
+        },
+        close,
+      };
+    } catch (error) {
+      close();
+      throw error;
+    }
   },
   refreshAfterAction(
     repo: Repository,

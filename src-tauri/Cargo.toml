@@ -26,6 +26,7 @@ tokio = { version = "1", features = ["time", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 glob = "0.3"
+tempfile = "3"
 portable-pty = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json", "system-proxy"] }
 keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service"] }

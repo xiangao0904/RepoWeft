@@ -498,61 +498,56 @@ pub async fn repository_detail(
     })
     .await
 }
-#[tauri::command]
-pub async fn repository_diff(
-    location: Location,
-    path: String,
+pub(crate) fn diff_text(
+    location: &Location,
+    path: &str,
     staged: bool,
-    hash: Option<String>,
+    hash: Option<&str>,
     untracked: bool,
-    request_id: Option<String>,
 ) -> Result<String, String> {
-    crate::tasks::read(request_id, move || {
-        if let Some(hash) = hash {
-            validate_hash(&hash)?;
-            return git(
-                &location,
-                &[
-                    "show",
-                    "--format=",
-                    "--no-ext-diff",
-                    "--no-textconv",
-                    &hash,
-                    "--",
-                    &path,
-                ],
-            );
+    if let Some(hash) = hash {
+        validate_hash(hash)?;
+        return git(
+            location,
+            &[
+                "show",
+                "--format=",
+                "--no-ext-diff",
+                "--no-textconv",
+                hash,
+                "--",
+                path,
+            ],
+        );
+    }
+    if untracked {
+        // Git's no-index mode exits 1 when it finds differences.
+        if location.kind == "ssh" {
+            return Err("Stage the untracked file to view its diff on the remote host.".into());
         }
-        if untracked {
-            // Git's no-index mode exits 1 when it finds differences.
-            if location.kind == "ssh" {
-                return Err("Stage the untracked file to view its diff on the remote host.".into());
-            }
-            let root = std::fs::canonicalize(&location.path).map_err(|e| e.to_string())?;
-            let file = std::fs::canonicalize(root.join(&path)).map_err(|e| e.to_string())?;
-            if !file.starts_with(&root) || !file.is_file() {
-                return Err("File is outside the repository".into());
-            }
-            if std::fs::metadata(&file).map_err(|e| e.to_string())?.len() > 1024 * 1024 {
-                return Err("File preview is limited to 1 MiB".into());
-            }
-            let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
-            if bytes.contains(&0) {
-                return Ok("Binary file".into());
-            }
-            return Ok(String::from_utf8_lossy(&bytes)
-                .lines()
-                .map(|s| format!("+{s}\n"))
-                .collect());
+        let root = std::fs::canonicalize(&location.path).map_err(|e| e.to_string())?;
+        let file = std::fs::canonicalize(root.join(path)).map_err(|e| e.to_string())?;
+        if !file.starts_with(&root) || !file.is_file() {
+            return Err("File is outside the repository".into());
         }
-        let mut args = vec!["diff", "--no-ext-diff", "--no-textconv"];
-        if staged {
-            args.push("--cached");
+        if std::fs::metadata(&file).map_err(|e| e.to_string())?.len() > 1024 * 1024 {
+            return Err("File preview is limited to 1 MiB".into());
         }
-        args.extend(["--", &path]);
-        git(&location, &args)
-    })
-    .await
+        let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
+        if bytes.contains(&0) {
+            return Ok("Binary file".into());
+        }
+        return Ok(String::from_utf8_lossy(&bytes)
+            .lines()
+            .map(|s| format!("+{s}\n"))
+            .collect());
+    }
+    let mut args = vec!["diff", "--no-ext-diff", "--no-textconv"];
+    if staged {
+        args.push("--cached");
+    }
+    args.extend(["--", path]);
+    git(location, &args)
 }
 #[tauri::command]
 pub async fn repository_action(
@@ -1041,15 +1036,7 @@ mod tests {
         assert_eq!(log(&loc, 0, true).unwrap().len(), 1);
         assert_eq!(log(&loc, 0, false).unwrap().len(), 2);
         std::fs::write(dir.join("你好.txt"), "hello\nworld\nnew line\n").unwrap();
-        let diff = tauri::async_runtime::block_on(repository_diff(
-            loc.clone(),
-            "你好.txt".into(),
-            false,
-            None,
-            false,
-            None,
-        ))
-        .unwrap();
+        let diff = diff_text(&loc, "你好.txt", false, None, false).unwrap();
         assert!(diff.contains("+new line"));
         execute_action(&loc, action("stage", vec!["你好.txt"], "")).unwrap();
         execute_action(&loc, action("unstage", vec!["你好.txt"], "")).unwrap();

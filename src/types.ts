@@ -93,3 +93,21 @@ export interface CommitDetail {
   message: string;
   files: CommitFile[];
 }
+
+export interface DiffLine {
+  text: string;
+  kind: "context" | "add" | "remove" | "hunk";
+}
+export interface DiffPage {
+  start: number;
+  lines: DiffLine[];
+}
+export interface DiffDocument {
+  id: string;
+  totalLines: number;
+  pageSize: number;
+}
+export interface DiffSource extends DiffDocument {
+  readPage: (page: number, signal?: AbortSignal) => Promise<DiffPage>;
+  close: () => void;
+}

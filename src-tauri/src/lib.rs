@@ -1,5 +1,6 @@
 mod accounts;
 mod avatars;
+mod diffs;
 mod git;
 mod oauth;
 mod ssh;
@@ -34,6 +35,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(git::GitState::default())
+        .manage(diffs::DiffState::default())
         .manage(terminal::TerminalState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
@@ -56,7 +58,9 @@ pub fn run() {
             git::repository_snapshot,
             git::repository_log,
             git::repository_detail,
-            git::repository_diff,
+            diffs::repository_diff_open,
+            diffs::repository_diff_page,
+            diffs::repository_diff_close,
             git::repository_action,
             git::repository_create,
             git::repository_create_remote,

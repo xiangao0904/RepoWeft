@@ -84,6 +84,12 @@ try {
     window.qaCalls = [];
     window.qaSlowSnapshot = false;
     window.qaCancelled = [];
+    window.qaDiffSessions = new Map();
+    window.qaDiffClosed = new Set();
+    window.qaSlowDiffOpen = false;
+    window.qaSlowDiffPage = false;
+    window.qaFailDiffPage = false;
+    window.qaDiffLinesSent = 0;
     const pending = new Map();
     window.isTauri = true;
     window.__TAURI_INTERNALS__ = {
@@ -124,10 +130,57 @@ try {
               .slice(0, 5000)
               .map((file) => ({ path: file.path, added: "1", deleted: "0" })),
           };
-        if (command === "repository_diff")
-          return Array.from({ length: 100000 }, (_, i) => `+line ${i}`).join(
-            "\n",
-          );
+        if (command === "repository_diff_open") {
+          if (
+            !args.diff?.location?.path ||
+            typeof args.diff.path !== "string" ||
+            typeof args.diff.staged !== "boolean" ||
+            typeof args.diff.untracked !== "boolean"
+          )
+            throw "Invalid diff open arguments";
+          if (window.qaSlowDiffOpen)
+            await new Promise((resolve, reject) => {
+              const timer = setTimeout(resolve, 1200);
+              pending.set(args.requestId, () => {
+                clearTimeout(timer);
+                reject("READ_CANCELLED");
+              });
+            });
+          if (window.qaDiffClosed.has(args.sessionId)) throw "READ_CANCELLED";
+          window.qaDiffSessions.set(args.sessionId, true);
+          return { id: args.sessionId, totalLines: 100000, pageSize: 128 };
+        }
+        if (command === "repository_diff_page") {
+          if (window.qaSlowDiffPage)
+            await new Promise((resolve, reject) => {
+              const timer = setTimeout(resolve, 1200);
+              pending.set(args.requestId, () => {
+                clearTimeout(timer);
+                reject("READ_CANCELLED");
+              });
+            });
+          if (window.qaFailDiffPage) {
+            window.qaFailDiffPage = false;
+            throw "Page read failed";
+          }
+          if (!window.qaDiffSessions.has(args.sessionId))
+            throw "Diff preview has been closed";
+          const start = args.page * 128;
+          const count = Math.min(128, 100000 - start);
+          window.qaDiffLinesSent += count;
+          return {
+            start,
+            lines: Array.from({ length: count }, (_, index) => ({
+              text: `+line ${start + index}`,
+              kind: "add",
+            })),
+          };
+        }
+        if (command === "repository_diff_close") {
+          window.qaDiffClosed.add(args.sessionId);
+          window.qaDiffSessions.delete(args.sessionId);
+          return;
+        }
         if (command === "repository_action") return "ok";
         return null;
       },
@@ -141,6 +194,13 @@ try {
   await page.locator(".sidebar-repo").filter({ hasText: "alpha" }).click();
   await page.locator(".commit-row").first().waitFor();
   assert.ok((await page.locator(".file-row").count()) < 60);
+  await page.locator(".file-row > button").first().click();
+  await page.waitForFunction(() =>
+    document.querySelector(".diff-view")?.textContent.includes("line 0"),
+  );
+  assert.equal(await page.evaluate(() => window.qaDiffSessions.size), 1);
+  await page.locator(".diff-close").click();
+  await page.waitForFunction(() => window.qaDiffSessions.size === 0);
   await page.locator(".commit-row").first().click();
   await page.locator(".changed-files button").first().waitFor();
   assert.ok((await page.locator(".changed-files button").count()) < 60);
@@ -148,6 +208,53 @@ try {
   await page.locator(".diff-view pre > div").first().waitFor();
   const diffRows = await page.locator(".diff-view pre > div").count();
   assert.ok(diffRows < 70, `mounted diff rows: ${diffRows}`);
+  await page
+    .locator(".diff-view")
+    .evaluate((element) => (element.scrollTop = element.scrollHeight));
+  await page.waitForFunction(() =>
+    document.querySelector(".diff-view")?.textContent.includes("line 99999"),
+  );
+  const initialLinesSent = await page.evaluate(() => window.qaDiffLinesSent);
+  assert.ok(
+    initialLinesSent <= 512,
+    `initial + final viewport transferred ${initialLinesSent} rows`,
+  );
+  await page.evaluate(() => (window.qaFailDiffPage = true));
+  await page
+    .locator(".diff-view")
+    .evaluate((element) => (element.scrollTop = 50000 * 24));
+  await page.locator(".diff-page-error").waitFor();
+  await page
+    .locator(".diff-page-error")
+    .getByRole("button", { name: "Retry", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    document.querySelector(".diff-view")?.textContent.includes("line 50000"),
+  );
+  const oldCancels = await page.evaluate(() => window.qaCancelled.length);
+  await page.evaluate(() => (window.qaSlowDiffPage = true));
+  await page
+    .locator(".diff-view")
+    .evaluate((element) => (element.scrollTop = 70000 * 24));
+  await page.waitForFunction(() =>
+    window.qaCalls.some(
+      (call) =>
+        call.command === "repository_diff_page" && call.args.page === 546,
+    ),
+  );
+  await page.evaluate(() => (window.qaSlowDiffPage = false));
+  await page
+    .locator(".diff-view")
+    .evaluate((element) => (element.scrollTop = 10 * 24));
+  await page.waitForFunction(() =>
+    document.querySelector(".diff-view")?.textContent.includes("line 10"),
+  );
+  assert.ok(
+    await page.evaluate(
+      (count) => window.qaCancelled.length > count,
+      oldCancels,
+    ),
+  );
   await page
     .locator(".diff-view")
     .evaluate((element) => (element.scrollTop = element.scrollHeight));
@@ -162,6 +269,18 @@ try {
     .filter({ visible: true })
     .last()
     .click();
+  await page.waitForFunction(() => window.qaDiffSessions.size === 0);
+  await page.evaluate(() => (window.qaSlowDiffOpen = true));
+  await page.locator(".changed-files button").first().click();
+  await page.waitForFunction(
+    () =>
+      window.qaCalls.filter((call) => call.command === "repository_diff_open")
+        .length >= 3,
+  );
+  await page.locator(".diff-close").click();
+  await page.evaluate(() => (window.qaSlowDiffOpen = false));
+  await page.waitForTimeout(1300);
+  assert.equal(await page.evaluate(() => window.qaDiffSessions.size), 0);
   await page.locator(".branch-selector").click();
   assert.ok((await page.locator(".branch-menu button").count()) < 30);
   await page.locator(".branch-menu input").fill("branch-999");
@@ -218,6 +337,13 @@ try {
   assert.equal(await page.locator(".open-repository-row").count(), 0);
   assert.equal(await page.locator(".repository-content-pane").count(), 0);
   assert.ok(await page.evaluate(() => window.qaCancelled.length > 0));
+  assert.equal(await page.evaluate(() => window.qaDiffSessions.size), 0);
+  assert.equal(
+    await page.evaluate(() =>
+      window.qaCalls.some((call) => call.command === "repository_diff"),
+    ),
+    false,
+  );
   assert.deepEqual(errors, []);
   await cdp.send("HeapProfiler.collectGarbage");
   const closedHeap = (await cdp.send("Runtime.getHeapUsage")).usedSize;
@@ -226,6 +352,8 @@ try {
       {
         diffLines: 100000,
         mountedDiffRows: diffRows,
+        initialLinesSent,
+        totalDiffLinesSent: await page.evaluate(() => window.qaDiffLinesSent),
         workingFiles: 10000,
         detailFiles: 5000,
         branches: 1000,
