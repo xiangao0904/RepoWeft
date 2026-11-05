@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import { errorText, useI18n, type MessageKey } from "../lib/i18n";
 import { gitService } from "../services/git";
+import { conflicted } from "../lib/changes";
 import { QuickCommitInput } from "./QuickCommitInput";
 import { Modal } from "./ui";
 
@@ -420,14 +421,6 @@ export function OperationStatus({
         {t("abortOperation")}
       </button>
     </div>
-  );
-}
-
-export function conflicted(file: { index: string; worktree: string }) {
-  return (
-    file.index === "U" ||
-    file.worktree === "U" ||
-    ["AA", "DD"].includes(file.index + file.worktree)
   );
 }
 

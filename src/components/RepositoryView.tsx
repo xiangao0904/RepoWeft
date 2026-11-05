@@ -55,8 +55,8 @@ import {
   ConflictEditor,
   OperationStatus,
   WorkspaceTools,
-  conflicted,
 } from "./GitTools";
+import { conflicted } from "../lib/changes";
 import { useStored } from "../lib/storage";
 
 export type RepoTab = "history" | "changes" | "branches" | "remotes";
