@@ -51,13 +51,17 @@ impl Session {
 pub struct TerminalState {
     sessions: Mutex<HashMap<u64, Arc<Session>>>,
     next: AtomicU64,
+    opening: Mutex<()>,
 }
 impl TerminalState {
     pub fn close_all(&self) {
-        if let Ok(mut sessions) = self.sessions.lock() {
-            for (_, session) in sessions.drain() {
-                session.stop();
-            }
+        let sessions: Vec<_> = self
+            .sessions
+            .lock()
+            .map(|mut sessions| sessions.drain().map(|(_, session)| session).collect())
+            .unwrap_or_default();
+        for session in sessions {
+            session.stop();
         }
     }
 }
@@ -138,8 +142,9 @@ pub async fn terminal_open(
 ) -> Result<u64, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<TerminalState>();
-        let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-        if sessions.len() >= 8 {
+        // Serialize creation without blocking acknowledgements or session removal.
+        let _opening = state.opening.lock().map_err(|e| e.to_string())?;
+        if state.sessions.lock().map_err(|e| e.to_string())?.len() >= 8 {
             return Err("Too many terminal sessions".into());
         }
         let pair = native_pty_system()
@@ -175,8 +180,11 @@ pub async fn terminal_open(
             },
         });
         let id = state.next.fetch_add(1, Ordering::Relaxed) + 1;
-        sessions.insert(id, session.clone());
-        drop(sessions);
+        state
+            .sessions
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(id, session.clone());
         let app = app.clone();
         std::thread::spawn(move || {
             let mut buffer = [0u8; 8192];
@@ -279,14 +287,16 @@ pub fn terminal_ack(state: State<'_, TerminalState>, id: u64, bytes: usize) -> R
     Ok(())
 }
 #[tauri::command]
-pub fn terminal_close(state: State<'_, TerminalState>, id: u64) -> Result<(), String> {
-    if let Some(session) = state
+pub async fn terminal_close(state: State<'_, TerminalState>, id: u64) -> Result<(), String> {
+    let session = state
         .sessions
         .lock()
         .map_err(|e| e.to_string())?
-        .remove(&id)
-    {
-        session.stop();
+        .remove(&id);
+    if let Some(session) = session {
+        tauri::async_runtime::spawn_blocking(move || session.stop())
+            .await
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
