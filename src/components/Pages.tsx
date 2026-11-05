@@ -15,10 +15,8 @@ import {
   Plus,
   Search,
   Server,
-  ShieldCheck,
   Star,
   Sun,
-  Terminal,
   Trash2,
   Wifi,
 } from "lucide-react";
@@ -504,31 +502,6 @@ export function Settings({
               <option value="zh-CN">简体中文</option>
               <option value="en">English</option>
             </select>
-          </div>
-        </div>
-      </section>
-      <section className="settings-section">
-        <h3 className="section-label">{t("behavior")}</h3>
-        <div className="settings-card">
-          <div className="settings-row">
-            <div>
-              <strong>
-                <Terminal size={15} />
-                {t("gitIntegration")}
-              </strong>
-              <p>{t("gitDescription")}</p>
-            </div>
-            <span className="settings-badge">PATH</span>
-          </div>
-          <div className="settings-row">
-            <div>
-              <strong>
-                <ShieldCheck size={15} />
-                {t("privacy")}
-              </strong>
-              <p>{t("privacyDescription")}</p>
-            </div>
-            <ShieldCheck size={20} className="addition" />
           </div>
         </div>
       </section>

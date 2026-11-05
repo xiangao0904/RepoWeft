@@ -1169,14 +1169,6 @@ kbd {
   background: var(--accent-bg);
   color: var(--accent);
 }
-.settings-badge {
-  border: 1px solid var(--border);
-  padding: 5px 8px;
-  border-radius: 4px;
-  font-family: monospace;
-  color: var(--muted);
-  font-size: 10px;
-}
 .shortcut-row {
   padding: 15px 22px;
 }

@@ -168,6 +168,8 @@ export const en = {
   noResults: "No matching results",
   noCommitsDescription: "Your first commit will appear here.",
   loadMore: "Load more commits",
+  loadPrevious: "Load previous commits",
+  expandUntracked: "Expand untracked folders",
   copyHash: "Copy commit hash",
   copied: "Copied to clipboard",
   author: "Author",
@@ -283,13 +285,6 @@ export const en = {
   light: "Light",
   language: "Language",
   languageDescription: "Choose the language used throughout the app.",
-  behavior: "Workspace",
-  gitIntegration: "System Git",
-  gitDescription:
-    "Uses Git from your PATH and your existing hooks. Local GitHub network operations use the selected account.",
-  privacy: "Private by default",
-  privacyDescription:
-    "Repository content and connection settings stay on this device. No analytics, no cloud account.",
   about: "Built for your flow",
   aboutDescription:
     "A lightweight, open source Git client for local and remote development.",
@@ -485,6 +480,8 @@ export const zh: Record<MessageKey, string> = {
   noResults: "没有找到匹配结果",
   noCommitsDescription: "第一次提交后，历史记录会显示在这里。",
   loadMore: "加载更多提交",
+  loadPrevious: "加载前面的提交",
+  expandUntracked: "展开未跟踪文件夹",
   copyHash: "复制提交哈希",
   copied: "已复制到剪贴板",
   author: "作者",
@@ -595,13 +592,6 @@ export const zh: Record<MessageKey, string> = {
   light: "浅色",
   language: "界面语言",
   languageDescription: "切换应用各个页面使用的语言。",
-  behavior: "工作区",
-  gitIntegration: "系统 Git",
-  gitDescription:
-    "使用 PATH 中的 Git 和已有的 Hooks。本机 GitHub 网络操作使用选中的账号。",
-  privacy: "默认保护隐私",
-  privacyDescription:
-    "仓库内容与连接配置保留在当前设备，不收集分析数据，无需云端账号。",
   about: "为顺畅开发而生",
   aboutDescription: "轻量、开源的 Git 客户端，让本地与远程开发同样顺手。",
   shortcuts: "键盘快捷键",
