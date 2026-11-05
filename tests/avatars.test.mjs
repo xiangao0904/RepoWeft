@@ -333,3 +333,58 @@ test("rate-limit cooldown survives restarts and honours Retry-After", async () =
   );
   assert.equal(calls, 1);
 });
+
+test("leaving a repository aborts active and queued avatars without starting fallbacks", async () => {
+  let started = 0,
+    fallbacks = 0;
+  const resolver = createAvatarResolver(
+    (_url, options) => {
+      started++;
+      return new Promise((_resolve, reject) =>
+        options.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("Cancelled", "AbortError")),
+          { once: true },
+        ),
+      );
+    },
+    async () => {
+      fallbacks++;
+      return null;
+    },
+    memoryStorage(),
+  );
+  const pending = Array.from({ length: 10 }, (_, i) =>
+    resolver.resolve(`user${i}@example.com`, "org/repo", hash),
+  );
+  await tick();
+  assert.equal(started, 2);
+  resolver.cancel("org/repo");
+  assert.deepEqual(await Promise.all(pending), Array(10).fill(null));
+  assert.equal(started, 2);
+  assert.equal(fallbacks, 0);
+});
+test("bulk cache writes obey the same eviction limit as individual lookups", async () => {
+  let calls = 0;
+  const resolver = createAvatarResolver(
+    async (url) => {
+      calls++;
+      if (url.includes("?per_page"))
+        return page(
+          Array.from({ length: 300 }, (_, i) => [
+            `author${i}@example.com`,
+            i + 100,
+          ]),
+        );
+      return response();
+    },
+    undefined,
+    memoryStorage(),
+  );
+  await resolver.warm(
+    "org/repo",
+    commits("a@example.com", "b@example.com", "c@example.com"),
+  );
+  await resolver.resolve("author0@example.com", "org/repo", hash);
+  assert.equal(calls, 2);
+});

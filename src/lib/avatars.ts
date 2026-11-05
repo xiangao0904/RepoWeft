@@ -132,10 +132,15 @@ export function createAvatarResolver(
     const saved = JSON.parse(storage?.getItem(IDENTITIES) || "null");
     if (saved?.emails && saved?.urls) {
       for (const [identity, url] of Object.entries(saved.urls))
-        if (identity && trustedAvatar(url)) urls.set(identity, url);
+        if (identity && trustedAvatar(url)) {
+          if (urls.size >= LIMIT) urls.delete(urls.keys().next().value!);
+          urls.set(identity, url);
+        }
       for (const [email, identity] of Object.entries(saved.emails))
-        if (email && typeof identity === "string" && urls.has(identity))
+        if (email && typeof identity === "string" && urls.has(identity)) {
+          if (emails.size >= LIMIT) emails.delete(emails.keys().next().value!);
           emails.set(email, identity);
+        }
       restored = true;
     }
   } catch {
@@ -161,6 +166,42 @@ export function createAvatarResolver(
     } catch {
       /* Storage is optional. */
     }
+  const controllers = new Map<string, AbortController>();
+  function controllerFor(repository: string) {
+    let controller = controllers.get(repository);
+    if (!controller) {
+      controller = new AbortController();
+      if (controllers.size >= LIMIT) {
+        const key = controllers.keys().next().value!;
+        controllers.get(key)?.abort();
+        controllers.delete(key);
+      }
+      controllers.set(repository, controller);
+    }
+    return controller;
+  }
+  function prune() {
+    const now = Date.now();
+    for (const [key, entry] of cache)
+      if (entry.expires <= now) cache.delete(key);
+    for (const [key, expiry] of warmed) if (expiry <= now) warmed.delete(key);
+  }
+  function cachePut(
+    key: string,
+    value: { expires: number; value: Promise<string | null> },
+  ) {
+    prune();
+    cache.delete(key);
+    while (cache.size >= LIMIT) cache.delete(cache.keys().next().value!);
+    cache.set(key, value);
+  }
+  function cancel(repository: string) {
+    controllers.get(repository)?.abort();
+    controllers.delete(repository);
+    warming.delete(repository);
+    for (const key of cache.keys())
+      if (key.startsWith(`${repository}:`)) cache.delete(key);
+  }
   let active = 0;
   const waiting: (() => void)[] = [];
   let blockedUntil = 0;
@@ -191,6 +232,8 @@ export function createAvatarResolver(
     commits: { email: string; hash: string }[],
   ): Promise<void> {
     if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository)) return;
+    prune();
+    const lifecycle = controllerFor(repository).signal;
     const running = warming.get(repository);
     if (running) return running;
     if (Date.now() < blockedUntil) return;
@@ -214,7 +257,7 @@ export function createAvatarResolver(
         const response = await fetcher(
           `https://api.github.com/repos/${repository}/commits?per_page=100`,
           {
-            signal: AbortSignal.timeout(5000),
+            signal: AbortSignal.any([AbortSignal.timeout(5000), lifecycle]),
             headers: { Accept: "application/vnd.github+json" },
           },
         );
@@ -224,7 +267,7 @@ export function createAvatarResolver(
         }
         if (!response.ok) return;
         const page = await response.json();
-        if (!Array.isArray(page)) return;
+        if (lifecycle.aborted || !Array.isArray(page)) return;
         // One page carries both the commit sha and the verified account behind it.
         for (const item of page) {
           const email = String(item?.commit?.author?.email ?? "")
@@ -239,12 +282,13 @@ export function createAvatarResolver(
           remember(email, url);
           const key = `${repository}:${email}`;
           if (!cache.has(key))
-            cache.set(key, {
+            cachePut(key, {
               expires: Date.now() + TTL,
               value: Promise.resolve(freshAvatar(url)),
             });
         }
         if (unresolved.size > LIMIT) unresolved.clear();
+        if (warmed.size >= LIMIT) warmed.delete(warmed.keys().next().value!);
         warmed.set(repository, Date.now() + TTL);
       } catch {
         /* Offline or blocked; per-commit lookups still resolve the visible rows. */
@@ -261,12 +305,15 @@ export function createAvatarResolver(
     repository: string | null,
     hash: string,
   ): Promise<string | null> {
+    prune();
+    const lifecycle = repository ? controllerFor(repository).signal : undefined;
     const normalized = email.trim().toLowerCase();
     const direct = githubIdentity(email);
     if (direct) return freshAvatar(direct);
     // Let a bulk page settle first: it usually answers every visible row at once.
     const running = repository ? warming.get(repository) : undefined;
     if (running) await settled(running);
+    if (lifecycle?.aborted) return null;
     const cached = known(normalized);
     if (cached) return freshAvatar(cached);
     if (unresolved.has(normalized)) return null;
@@ -281,15 +328,32 @@ export function createAvatarResolver(
     if (old && old.expires > Date.now()) return old.value;
     if (waiting.length >= 32) return null;
     const value = (async () => {
-      if (active >= 2) await new Promise<void>((done) => waiting.push(done));
-      else active++;
+      if (active >= 2) {
+        const acquired = await new Promise<boolean>((done) => {
+          const ready = () => {
+            lifecycle?.removeEventListener("abort", abort);
+            done(true);
+          };
+          const abort = () => {
+            const index = waiting.indexOf(ready);
+            if (index >= 0) waiting.splice(index, 1);
+            done(false);
+          };
+          waiting.push(ready);
+          lifecycle?.addEventListener("abort", abort, { once: true });
+        });
+        if (!acquired) return null;
+      } else active++;
       try {
+        if (lifecycle?.aborted) return null;
         if (Date.now() < blockedUntil)
           return fallback ? await fallback(repository, hash) : null;
         const response = await fetcher(
           `https://api.github.com/repos/${repository}/commits/${hash}`,
           {
-            signal: AbortSignal.timeout(5000),
+            signal: lifecycle
+              ? AbortSignal.any([AbortSignal.timeout(5000), lifecycle])
+              : AbortSignal.timeout(5000),
             headers: { Accept: "application/vnd.github+json" },
           },
         );
@@ -298,6 +362,7 @@ export function createAvatarResolver(
         if (!response.ok)
           return fallback ? await fallback(repository, hash) : null;
         const data = await response.json();
+        if (lifecycle?.aborted) return null;
         const url = data.author?.avatar_url;
         if (!trustedAvatar(url)) {
           if (data?.author === null) {
@@ -308,6 +373,7 @@ export function createAvatarResolver(
         }
         return freshAvatar(url);
       } catch {
+        if (lifecycle?.aborted) return null;
         return fallback
           ? await fallback(repository, hash).catch(() => null)
           : null;
@@ -321,20 +387,26 @@ export function createAvatarResolver(
         const entry = cache.get(key);
         if (entry) entry.expires = Date.now() + 60_000;
       }
+      if (lifecycle?.aborted) return null;
       if (url) remember(normalized, url);
       return url ? freshAvatar(url) : null;
     });
-    if (cache.size >= LIMIT) cache.delete(cache.keys().next().value!);
-    cache.set(key, { expires: Date.now() + TTL, value });
+    cachePut(key, { expires: Date.now() + TTL, value });
     return value;
   }
-  return { resolve, warm };
+  return { resolve, warm, cancel };
 }
 const github = createAvatarResolver(fetch, async (repository, hash) => {
   if (!("__TAURI_INTERNALS__" in globalThis)) return null;
   return invoke<string | null>("github_commit_avatar", { repository, hash });
 });
 export const resolveGithubAvatar = github.resolve;
+export function cancelGithubAvatars(remotes: string[]) {
+  for (const remote of remotes) {
+    const repository = githubRepository(remote);
+    if (repository) github.cancel(repository);
+  }
+}
 export function warmGithubAvatars(
   remotes: string[],
   commits: { email: string; hash: string }[],
