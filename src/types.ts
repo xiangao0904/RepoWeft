@@ -108,7 +108,20 @@ export type GitAction =
   | "merge"
   | "addRemote"
   | "removeRemote";
+export interface PushLease {
+  remote: string;
+  target: string;
+  expected: string;
+}
+export interface RewordResult {
+  head: string;
+  branch: string;
+  targets: PushLease[];
+}
 export interface Action {
+  lease?: PushLease;
+  expectedHead?: string;
+  expectedBranch?: string;
   allowEmpty?: boolean;
   kind: GitAction;
   paths?: string[];

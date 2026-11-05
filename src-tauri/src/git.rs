@@ -70,6 +70,23 @@ pub struct Action {
     extra: Option<String>,
     #[serde(default, rename = "allowEmpty")]
     allow_empty: bool,
+    lease: Option<PushLease>,
+    #[serde(rename = "expectedHead")]
+    expected_head: Option<String>,
+    #[serde(rename = "expectedBranch")]
+    expected_branch: Option<String>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+pub struct PushLease {
+    remote: String,
+    target: String,
+    expected: String,
+}
+#[derive(Serialize)]
+struct RewordResult {
+    head: String,
+    branch: String,
+    targets: Vec<PushLease>,
 }
 #[derive(Serialize)]
 pub struct CommitFile {
@@ -842,6 +859,34 @@ fn execute_action(location: &Location, action: Action) -> Result<String, String>
             git(location, &args)
         }
         "forcePush" => {
+            if let Some(lease) = action.lease {
+                let head = action.expected_head.ok_or("REWRITE_STATE_CHANGED")?;
+                let branch = action.expected_branch.ok_or("REWRITE_STATE_CHANGED")?;
+                validate_hash(&head)?;
+                validate_hash(&lease.expected)?;
+                if lease.remote.is_empty()
+                    || lease.remote.starts_with('-')
+                    || !lease.target.starts_with("refs/heads/")
+                {
+                    return Err("Invalid push target".into());
+                }
+                git(location, &["check-ref-format", &lease.target])?;
+                if commit_target(location, "HEAD")? != head
+                    || git(location, &["symbolic-ref", "--short", "HEAD"])?.trim() != branch
+                {
+                    return Err("REWRITE_STATE_CHANGED".into());
+                }
+                return git(
+                    location,
+                    &[
+                        "push",
+                        &format!("--force-with-lease={}:{}", lease.target, lease.expected),
+                        "--",
+                        &lease.remote,
+                        &format!("{head}:{}", lease.target),
+                    ],
+                );
+            }
             // An explicit expected object protects against background fetches updating the lease.
             let upstream = git(
                 location,
@@ -930,7 +975,24 @@ fn execute_action(location: &Location, action: Action) -> Result<String, String>
                 ],
             )
         }
-        "reword" => reword(location, &extra, &value),
+        "reword" => {
+            let previous = commit_target(location, "HEAD")?;
+            let branch = git(location, &["symbolic-ref", "--short", "HEAD"])?
+                .trim()
+                .to_owned();
+            let mut targets = published_targets(location, &extra)?;
+            reword(location, &extra, &value)?;
+            let head = commit_target(location, "HEAD")?;
+            if previous == head {
+                targets.clear();
+            }
+            serde_json::to_string(&RewordResult {
+                head,
+                branch,
+                targets,
+            })
+            .map_err(|e| e.to_string())
+        }
         "rebase" => {
             let hash = commit_target(location, &value)?;
             git(location, &["rebase", &hash])
@@ -1088,6 +1150,53 @@ fn commit_target(location: &Location, value: &str) -> Result<String, String> {
         &["rev-parse", "--verify", &format!("{value}^{{commit}}")],
     )
     .map(|s| s.trim().to_owned())
+}
+fn published_targets(location: &Location, target: &str) -> Result<Vec<PushLease>, String> {
+    let hash = commit_target(location, target)?;
+    let upstream = git(
+        location,
+        &["rev-parse", "--symbolic-full-name", "@{upstream}"],
+    )
+    .unwrap_or_default();
+    let remotes = git(location, &["remote"])?;
+    let refs = git(
+        location,
+        &[
+            "for-each-ref",
+            &format!("--contains={hash}"),
+            "--format=%(refname)%00%(objectname)%00%(symref)",
+            "refs/remotes/",
+        ],
+    )?;
+    let mut targets = Vec::new();
+    for line in refs.lines() {
+        let fields: Vec<_> = line.split('\0').collect();
+        if fields.len() != 3 || !fields[2].is_empty() {
+            continue;
+        }
+        let Some(short) = fields[0].strip_prefix("refs/remotes/") else {
+            continue;
+        };
+        let Some(remote) = remotes
+            .lines()
+            .filter(|r| short.starts_with(&format!("{r}/")))
+            .max_by_key(|r| r.len())
+        else {
+            continue;
+        };
+        let branch = &short[remote.len() + 1..];
+        let lease = PushLease {
+            remote: remote.into(),
+            target: format!("refs/heads/{branch}"),
+            expected: fields[1].into(),
+        };
+        if fields[0] == upstream.trim() {
+            targets.insert(0, lease);
+        } else {
+            targets.push(lease);
+        }
+    }
+    Ok(targets)
 }
 
 fn reword(location: &Location, target: &str, message: &str) -> Result<String, String> {
@@ -1503,6 +1612,9 @@ mod tests {
                 extra: Some(extra.into()),
                 paths: Some(paths.iter().map(|s| s.to_string()).collect()),
                 allow_empty,
+                lease: None,
+                expected_head: None,
+                expected_branch: None,
             },
         )
     }
@@ -1671,9 +1783,38 @@ mod tests {
         )
         .unwrap();
         run_action(&loc, "commit", "root", "", &[], true).unwrap();
+        assert!(published_targets(&loc, "HEAD").unwrap().is_empty());
         run_action(&loc, "publishBranch", "origin", "", &[], false).unwrap();
         assert_eq!(snapshot(&loc).unwrap().tracking.unwrap().ahead, 0);
-        run_action(&loc, "reword", "rewritten", "HEAD", &[], false).unwrap();
+        let published = commit_target(&loc, "HEAD").unwrap();
+        run_action(&loc, "commit", "local only", "", &[], true).unwrap();
+        assert!(published_targets(&loc, "HEAD").unwrap().is_empty());
+        assert_eq!(
+            published_targets(&loc, "HEAD~1").unwrap()[0].expected,
+            published
+        );
+        run_action(&loc, "reset", "HEAD~1", "hard", &[], false).unwrap();
+        let result: serde_json::Value = serde_json::from_str(
+            &run_action(&loc, "reword", "rewritten", "HEAD", &[], false).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["targets"][0]["expected"], published);
+        let push = |receipt: &serde_json::Value| -> Action {
+            serde_json::from_value(serde_json::json!({"kind":"forcePush", "lease":receipt["targets"][0], "expectedHead":receipt["head"], "expectedBranch":receipt["branch"]})).unwrap()
+        };
+        execute_action(&loc, push(&result)).unwrap();
+        let mut wrong_branch = push(&result);
+        wrong_branch.expected_branch = Some("another-branch".into());
+        assert_eq!(
+            execute_action(&loc, wrong_branch).unwrap_err(),
+            "REWRITE_STATE_CHANGED"
+        );
+        let mut wrong_head = push(&result);
+        wrong_head.expected_head = Some(published);
+        assert_eq!(
+            execute_action(&loc, wrong_head).unwrap_err(),
+            "REWRITE_STATE_CHANGED"
+        );
         run_action(&loc, "forcePush", "", "", &[], false).unwrap();
         let (_other_dir, other) = workflow_repo();
         git(
@@ -1686,8 +1827,13 @@ mod tests {
         run_action(&other, "trackBranch", "origin/main", "", &[], false).unwrap();
         run_action(&other, "commit", "remote advanced", "", &[], true).unwrap();
         git(&other, &["push", "origin", "main"]).unwrap();
-        run_action(&loc, "reword", "second rewrite", "HEAD", &[], false).unwrap();
+        let second: serde_json::Value = serde_json::from_str(
+            &run_action(&loc, "reword", "second rewrite", "HEAD", &[], false).unwrap(),
+        )
+        .unwrap();
         assert!(run_action(&loc, "forcePush", "", "", &[], false).is_err());
+        git(&loc, &["fetch", "origin"]).unwrap();
+        assert!(execute_action(&loc, push(&second)).is_err());
     }
     #[test]
     fn local_workflow() {
@@ -1709,6 +1855,9 @@ mod tests {
             value: Some(value.into()),
             extra: None,
             allow_empty: false,
+            lease: None,
+            expected_head: None,
+            expected_branch: None,
         };
         git(
             &loc,

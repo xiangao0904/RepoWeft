@@ -7,12 +7,16 @@ import type {
   Snapshot,
   Repository,
   ConflictVersions,
+  RewordResult,
 } from "../types";
 import { errorText, useI18n, type MessageKey } from "../lib/i18n";
 import { gitService } from "../services/git";
 import { Modal } from "./ui";
 
-type Run = (action: Action) => Promise<boolean>;
+type Run = (
+  action: Action,
+  onResult?: (output: string) => void,
+) => Promise<boolean>;
 type Confirm = (message: MessageKey, action: Action) => void;
 
 export function ConflictEditor({
@@ -189,6 +193,10 @@ export function CommitActions({
   const { t } = useI18n();
   const [value, setValue] = useState(kind === "reword" ? commit.message : "");
   const [mode, setMode] = useState("mixed");
+  const [publication, setPublication] = useState<RewordResult | null>(null);
+  const [pushTarget, setPushTarget] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const locked = busy || saving;
   const options: [GitAction, MessageKey][] = [
     ["checkoutCommit", "checkoutCommit"],
     ["createBranch", "newBranchAt"],
@@ -202,11 +210,98 @@ export function CommitActions({
   ];
   const needsValue =
     kind === "createBranch" || kind === "createTag" || kind === "reword";
+  async function submit() {
+    if (locked || (needsValue && !value.trim())) return;
+    setSaving(true);
+    try {
+      const response: { result: RewordResult | null } = { result: null };
+      const ok = await onAction(
+        {
+          kind,
+          value: needsValue ? value.trim() : commit.hash,
+          extra: kind === "reset" ? mode : needsValue ? commit.hash : undefined,
+        },
+        (output) => {
+          if (kind === "reword")
+            response.result = JSON.parse(output) as RewordResult;
+        },
+      );
+      if (!ok) return;
+      if (response.result && response.result.targets.length)
+        setPublication(response.result);
+      else onClose();
+    } finally {
+      setSaving(false);
+    }
+  }
+  if (publication) {
+    const target = publication.targets[pushTarget];
+    return (
+      <Modal
+        key="publish-rewrite"
+        title={t("publishedRewordTitle")}
+        onClose={() => {
+          if (!locked) onClose();
+        }}
+      >
+        <div className="modal-content git-operation-dialog">
+          <p>{t("publishedRewordPrompt")}</p>
+          {publication.targets.length > 1 ? (
+            <label>
+              {t("publishedRewordTarget")}
+              <select
+                aria-label={t("publishedRewordTarget")}
+                disabled={locked}
+                value={pushTarget}
+                onChange={(e) => setPushTarget(Number(e.target.value))}
+              >
+                {publication.targets.map((lease, index) => (
+                  <option key={`${lease.remote}:${lease.target}`} value={index}>
+                    {lease.remote}/{lease.target.replace("refs/heads/", "")}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <code>
+              {target.remote}/{target.target.replace("refs/heads/", "")}
+            </code>
+          )}
+          <footer>
+            <button
+              className="secondary-button"
+              disabled={locked}
+              onClick={onClose}
+            >
+              {t("keepLocalRewrite")}
+            </button>
+            <button
+              className="primary-button"
+              disabled={locked}
+              onClick={() =>
+                void onAction({
+                  kind: "forcePush",
+                  lease: target,
+                  expectedHead: publication.head,
+                  expectedBranch: publication.branch,
+                }).then((ok) => {
+                  if (ok) onClose();
+                })
+              }
+            >
+              {t("forcePush")}
+            </button>
+          </footer>
+        </div>
+      </Modal>
+    );
+  }
   return (
     <Modal
+      key="edit-commit"
       title={t(options.find(([action]) => action === kind)![1])}
       onClose={() => {
-        if (!busy) onClose();
+        if (!locked) onClose();
       }}
     >
       <div className="modal-content git-operation-dialog">
@@ -215,36 +310,12 @@ export function CommitActions({
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (busy) return;
-            void onAction({
-              kind,
-              value: needsValue ? value.trim() : commit.hash,
-              extra:
-                kind === "reset" ? mode : needsValue ? commit.hash : undefined,
-            }).then((ok) => {
-              if (ok) onClose();
-            });
+            if (locked) return;
+            void submit();
           }}
         >
-          <p>
-            {t(
-              kind === "reword"
-                ? "rewordWarning"
-                : kind === "reset"
-                  ? "resetWarning"
-                  : "historyWarning",
-            )}
-          </p>
-          {needsValue && (
-            <textarea
-              required
-              autoFocus
-              aria-label={t("actionValue")}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              rows={kind === "reword" ? 5 : 2}
-            />
-          )}
+          {kind !== "reword" && <p>{t(kind === "reset" ? "resetWarning" : "historyWarning")}</p>}
+          {needsValue && <textarea required autoFocus aria-label={t("actionValue")} value={value} onChange={e => setValue(e.target.value)} rows={kind === "reword" ? 5 : 2} />}
           {kind === "reset" && (
             <select
               aria-label={t("resetMode")}
@@ -260,14 +331,14 @@ export function CommitActions({
             <button
               type="button"
               className="secondary-button"
-              disabled={busy}
+              disabled={locked}
               onClick={onClose}
             >
               {t("cancel")}
             </button>
             <button
               className="primary-button"
-              disabled={busy || (needsValue && !value.trim())}
+              disabled={locked || (needsValue && !value.trim())}
             >
               {t("confirm")}
             </button>

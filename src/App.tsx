@@ -286,13 +286,17 @@ export default function App() {
       if (id === request.current) setBusy(false);
     }
   }
-  async function action(action: Action): Promise<boolean> {
+  async function action(
+    action: Action,
+    onResult?: (output: string) => void,
+  ): Promise<boolean> {
     if (!repo || operationLock.current || busy) return false;
     operationLock.current = true;
     setBusy(true);
     try {
-      await gitService.action(repo, action);
+      const output = await gitService.action(repo, action);
       setData(await gitService.refreshAfterAction(repo, action, data));
+      onResult?.(output);
       notify(t("operationSuccess"));
       return true;
     } catch (error) {

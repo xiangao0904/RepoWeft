@@ -66,7 +66,10 @@ export interface RepoViewProps {
   data: Snapshot;
   tab: RepoTab;
   busy: boolean;
-  onAction: (action: Action) => Promise<boolean>;
+  onAction: (
+    action: Action,
+    onResult?: (output: string) => void,
+  ) => Promise<boolean>;
   onExpandUntracked: () => Promise<void>;
   onPrompt: (type: "branch" | "remote") => void;
   onConfirm: (message: MessageKey, action: Action) => void;

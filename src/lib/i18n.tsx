@@ -1,6 +1,13 @@
 import { createContext, useContext } from "react";
 
 export const en = {
+  publishedRewordTitle: "Push edited commit?",
+  publishedRewordPrompt:
+    "The commit message has been updated locally. This commit was already published. Force push the rewritten history to the selected remote branch? The push will be rejected if the remote has changed.",
+  publishedRewordTarget: "Remote branch",
+  keepLocalRewrite: "Keep local only",
+  rewriteStateChanged:
+    "The current branch or commit changed after editing. Review the repository before pushing.",
   contextCheckout: "Check out commit…",
   contextBranch: "Create branch here…",
   contextTag: "Create tag here…",
@@ -67,8 +74,6 @@ export const en = {
   deleteTag: "Delete local tag",
   pushTag: "Push tag",
   reword: "Edit commit message",
-  rewordWarning:
-    "Rewrites this commit and its descendants on the current branch. Requires a clean working tree and linear history. Published history will need a force push.",
   rebase: "Rebase current branch onto this commit",
   historyWarning:
     "This changes the current branch history or files. Conflicts can be resolved in Changes. Detached checkout leaves new commits outside a branch until you create one.",
@@ -437,6 +442,13 @@ export const en = {
 export type MessageKey = keyof typeof en;
 export type Locale = "en" | "zh-CN";
 export const zh: Record<MessageKey, string> = {
+  publishedRewordTitle: "是否推送修改后的提交？",
+  publishedRewordPrompt:
+    "提交说明已在本地修改。此提交之前已经推送，是否将改写后的历史强制推送到所选远程分支？如果远程发生了变化，推送会被拒绝。",
+  publishedRewordTarget: "远程分支",
+  keepLocalRewrite: "仅保留本地修改",
+  rewriteStateChanged:
+    "编辑后，当前分支或提交发生了变化。请先检查仓库状态，再推送。",
   contextCheckout: "检出此提交…",
   contextBranch: "从此处创建分支…",
   contextTag: "在此处创建标签…",
@@ -503,8 +515,6 @@ export const zh: Record<MessageKey, string> = {
   deleteTag: "删除本地标签",
   pushTag: "推送标签",
   reword: "修改提交说明",
-  rewordWarning:
-    "此操作会改写当前分支上的此提交及后续提交。工作区须保持干净，且历史中不能有合并提交。已经推送的历史需要强制推送。",
   rebase: "将当前分支变基到此提交",
   historyWarning:
     "此操作会改变当前分支的历史或文件。若出现冲突，可在更改页面处理。分离检出后，新提交需要创建分支来保存。",
@@ -866,6 +876,8 @@ export function errorText(
     case "DIFF_SESSION_EXISTS":
     case "DIFF_INVALID_SESSION":
       return t("diffLoadFailed");
+    case "REWRITE_STATE_CHANGED":
+      return t("rewriteStateChanged");
     case "ACCOUNT_REMOTE_REQUIRED":
       return t("accountRemoteRequired");
     case "ACCOUNT_GITHUB_ONLY":
