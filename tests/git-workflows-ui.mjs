@@ -215,6 +215,10 @@ try {
       .innerText(),
     "+2",
   );
+  assert.equal(
+    await page.locator(".commit-ref-rail, .history-columns").count(),
+    0,
+  );
   const alignment = await page.evaluate(() => {
     const row = document
       .querySelectorAll(".commit-row")[5]
@@ -229,18 +233,22 @@ try {
       .getBoundingClientRect();
     const message = document
       .querySelectorAll(".commit-row")[5]
-      .querySelector(".commit-row-title")
+      .querySelector(".commit-row-title > strong")
       .getBoundingClientRect();
+    const graph = document
+      .querySelector(".commit-graph")
+      .getBoundingClientRect();
+    const list = document.querySelector(".commit-list").getBoundingClientRect();
     return {
-      centerDelta: Math.abs(
-        label.y + label.height / 2 - node.y - node.height / 2,
-      ),
-      ordered: label.right < node.x && node.right < message.x,
+      ordered: node.right < message.x && message.right <= label.x,
+      graphOffset: graph.x - list.x,
+      titleOffset: message.x - list.x,
       rowHeight: row.height,
     };
   });
-  assert.ok(alignment.centerDelta <= 1, JSON.stringify(alignment));
   assert.ok(alignment.ordered, JSON.stringify(alignment));
+  assert.equal(alignment.graphOffset, 0);
+  assert.ok(alignment.titleOffset < 110, JSON.stringify(alignment));
   assert.equal(alignment.rowHeight, 44);
   await page.screenshot({
     animations: "disabled",

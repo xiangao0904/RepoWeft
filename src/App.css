@@ -3483,95 +3483,37 @@ textarea,
 .branch-badge > svg {
   flex-shrink: 0;
 }
-.graph-with-refs {
-  --ref-width: 154px;
+.commit-row-title {
+  width: 100%;
 }
-.graph-with-refs .commit-graph {
-  left: var(--ref-width);
+.commit-row-title > strong {
+  flex: 1 1 auto;
 }
-.graph-with-refs .commit-row {
-  padding-left: calc(var(--ref-width) + var(--graph-width) + 12px);
-  border-bottom-color: transparent;
-}
-.graph-with-refs .commit-row:hover {
-  background: var(--surface-hover);
-}
-.commit-ref-rail {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: var(--ref-width);
-  padding-left: 24px;
+.commit-inline-refs {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 2px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 1 auto;
+  max-width: 55%;
+  min-width: 0;
+  margin-left: auto;
 }
-.commit-ref-rail > .branch-badge {
-  position: relative;
-  max-width: 100%;
-  height: 18px;
+.commit-inline-refs > .branch-badge {
+  min-width: 0;
+  max-width: 180px;
+  flex-shrink: 1;
+  height: 19px;
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 10px;
-  line-height: 14px;
+  line-height: 15px;
   font-weight: 500;
 }
-.commit-ref-rail::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: calc(100% + 4px);
-  width: calc(var(--ref-connector-width) - 4px);
-  border-top: 1px solid var(--lane-color);
-  opacity: 0.6;
-  pointer-events: none;
-}
-.commit-ref-rail > .branch-badge::after {
-  content: "";
-  position: absolute;
-  width: 5px;
-  right: -6px;
-  top: 50%;
-  border-top: 1px solid var(--lane-color);
-  opacity: 0.6;
-  pointer-events: none;
-}
-.commit-ref-rail:has(> .branch-badge:nth-child(2))::before {
-  content: "";
-  position: absolute;
-  left: calc(100% + 4px);
-  top: calc(50% - 10px);
-  height: 20px;
-  border-left: 1px solid var(--lane-color);
-  opacity: 0.6;
-  pointer-events: none;
-}
-.commit-ref-rail .ref-overflow {
-  position: absolute;
-  left: 5px;
+.commit-inline-refs .ref-overflow {
   color: var(--muted);
   font-size: 9px;
-}
-.history-columns {
-  display: grid;
-  grid-template-columns: 154px var(--graph-width) minmax(0, 1fr);
   flex-shrink: 0;
-  min-height: 26px;
-  align-items: center;
-  border-bottom: 1px solid var(--border);
-  color: var(--subtle);
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.history-columns > span {
-  padding-left: 12px;
-}
-.history-columns > span:nth-child(2) {
-  padding-left: 10px;
 }
 .workspace-tools {
   padding: 8px 14px;

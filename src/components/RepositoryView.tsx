@@ -94,14 +94,10 @@ const CommitRow = memo(function CommitRow({
   onSelect,
   onContext,
   remoteNames,
-  lane,
-  laneColor,
   tracking,
 }: {
   onContext: (commit: Commit) => void;
   remoteNames: string[];
-  lane: number;
-  laneColor: string;
   tracking?: Snapshot["tracking"];
   commit: Commit;
   selected: boolean;
@@ -112,48 +108,42 @@ const CommitRow = memo(function CommitRow({
   return (
     <button
       className={`commit-row ${selected ? "selected" : ""}`}
-      style={
-        {
-          "--ref-connector-width": `${21 + lane * 20}px`,
-          "--lane-color": laneColor,
-        } as CSSProperties
-      }
       onClick={() => onSelect(c)}
       onContextMenu={(e) => {
         e.preventDefault();
         onContext(c);
       }}
     >
-      {!!c.refs.length && (
-        <div className="commit-ref-rail">
-          {c.refs.slice(0, 2).map((ref) => (
-            <BranchBadge
-              key={ref}
-              name={ref}
-              remote={
-                ref.startsWith("refs/remotes/") ||
-                remoteNames.some((name) => ref.startsWith(`${name}/`))
-              }
-              hint={
-                ref.startsWith("HEAD -> ") && tracking
-                  ? `${tracking.ahead} ${t("aheadCommits")} · ${tracking.behind} ${t("behindCommits")}`
-                  : undefined
-              }
-            />
-          ))}
-          {c.refs.length > 2 && (
-            <span
-              className="ref-overflow"
-              title={c.refs.slice(2).join("\n")}
-              aria-label={t("moreReferences")}
-            >
-              +{c.refs.length - 2}
-            </span>
-          )}
-        </div>
-      )}
       <div className="commit-row-title">
         <strong>{c.message}</strong>
+        {!!c.refs.length && (
+          <div className="commit-inline-refs">
+            {c.refs.slice(0, 2).map((ref) => (
+              <BranchBadge
+                key={ref}
+                name={ref}
+                remote={
+                  ref.startsWith("refs/remotes/") ||
+                  remoteNames.some((name) => ref.startsWith(`${name}/`))
+                }
+                hint={
+                  ref.startsWith("HEAD -> ") && tracking
+                    ? `${tracking.ahead} ${t("aheadCommits")} · ${tracking.behind} ${t("behindCommits")}`
+                    : undefined
+                }
+              />
+            ))}
+            {c.refs.length > 2 && (
+              <span
+                className="ref-overflow"
+                title={c.refs.slice(2).join("\n")}
+                aria-label={t("moreReferences")}
+              >
+                +{c.refs.length - 2}
+              </span>
+            )}
+          </div>
+        )}
       </div>
       <div className="commit-meta">
         <Avatar
@@ -505,14 +495,6 @@ function History(props: RepoViewProps) {
             </div>
           </div>
           <div
-            className="history-columns"
-            style={{ "--graph-width": `${graph.width}px` } as CSSProperties}
-          >
-            <span>{t("branchTags")}</span>
-            <span>{t("graph")}</span>
-            <span>{t("commitMessage")}</span>
-          </div>
-          <div
             ref={scrollRef}
             className="commit-list-scroll"
             onScroll={(e) => {
@@ -575,7 +557,7 @@ function History(props: RepoViewProps) {
               />
             ) : (
               <div
-                className="commit-list graph-with-refs"
+                className="commit-list"
                 style={{ "--graph-width": `${graph.width}px` } as CSSProperties}
               >
                 <CommitGraph
@@ -595,7 +577,7 @@ function History(props: RepoViewProps) {
                 />
                 <div className="commit-rows">
                   <div style={{ height: start * rowHeight, flexShrink: 0 }} />
-                  {visible.slice(start, end).map((c, index) => (
+                  {visible.slice(start, end).map((c) => (
                     <CommitRow
                       key={c.hash}
                       commit={c}
@@ -604,8 +586,6 @@ function History(props: RepoViewProps) {
                       onSelect={selectCommit}
                       onContext={openActions}
                       remoteNames={remoteNames}
-                      lane={graph.points[start + index].lane}
-                      laneColor={graph.points[start + index].color}
                       tracking={data.tracking}
                     />
                   ))}

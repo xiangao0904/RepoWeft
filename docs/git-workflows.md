@@ -4,7 +4,7 @@ RepoWeft runs these operations through the installed Git client for local reposi
 
 ## Available controls
 
-- History places branch and tag labels beside their commit nodes, with connector lines into the graph. Computer and cloud icons distinguish local branches from remote tracking branches; a check marks the current branch. Ahead/behind counts appear in the current branch tooltip. Remote tracking references represent the last fetched state.
+- History keeps the original commit list layout, with branch and tag labels on the right of each commit title. Labels only occupy space on rows that have references; no separate reference column is reserved. Computer and cloud icons distinguish local branches from remote tracking branches; a check marks the current branch. Ahead/behind counts appear in the current branch tooltip. Remote tracking references represent the last fetched state.
 - Right-click a commit, or select it and open Commit actions, to create a branch or lightweight tag, check out a detached revision, reset the current branch, revert, cherry-pick, merge, rebase, or edit its message.
 - Reset offers soft, mixed, and hard modes with an explanation before execution.
 - Editing an older message replays a linear history, preserving empty commits and file trees. A clean working directory and an attached branch are required. Histories containing merges are rejected before rewriting.
