@@ -1,6 +1,9 @@
 import { createContext, useContext } from "react";
 
 export const en = {
+  commitCountHint:
+    "Total commits in this history scope, including commits not loaded yet",
+  commitCountFailed: "Count unavailable",
   rewordOperationActive:
     "Finish or abort the current Git operation before editing a commit message.",
   rewordTempWorktree:
@@ -451,6 +454,8 @@ export const en = {
 export type MessageKey = keyof typeof en;
 export type Locale = "en" | "zh-CN";
 export const zh: Record<MessageKey, string> = {
+  commitCountHint: "当前历史范围的提交总数，包含尚未加载的提交",
+  commitCountFailed: "暂时无法统计提交数",
   rewordOperationActive: "请先完成或中止当前的 Git 操作，再修改提交说明。",
   rewordTempWorktree: "无法创建临时工作树，当前分支和文件已保留。",
   rewordTreeChanged: "钩子或历史编辑改变了文件内容，原分支和文件已保留。",

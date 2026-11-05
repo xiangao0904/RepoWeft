@@ -123,6 +123,8 @@ try {
         }
         if (command === "repository_log")
           return commits.slice(args.skip, args.skip + 100);
+        if (command === "repository_commit_count")
+          return args.currentOnly ? 1200 : commits.length;
         if (command === "repository_detail")
           return {
             message: "QA commit",
@@ -193,6 +195,21 @@ try {
   const baselineHeap = (await cdp.send("Runtime.getHeapUsage")).usedSize;
   await page.locator(".sidebar-repo").filter({ hasText: "alpha" }).click();
   await page.locator(".commit-row").first().waitFor();
+  await page.waitForFunction(() =>
+    document.querySelector(".history-count")?.textContent.includes("1,500"),
+  );
+  assert.ok((await page.locator(".commit-row").count()) < 60);
+  await page
+    .getByRole("button", { name: "Current branch", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    document.querySelector(".history-count")?.textContent.includes("1,200"),
+  );
+  await page.getByRole("button", { name: "All branches", exact: true }).click();
+  await page.waitForFunction(() =>
+    document.querySelector(".history-count")?.textContent.includes("1,500"),
+  );
+
   assert.ok((await page.locator(".file-row").count()) < 60);
   await page.locator(".file-row > button").first().click();
   await page.waitForFunction(() =>
@@ -307,6 +324,7 @@ try {
     .getByRole("button", { name: "Load previous commits", exact: true })
     .waitFor();
   assert.ok((await page.locator(".commit-row").count()) < 60);
+  assert.match(await page.locator(".history-count").innerText(), /1,500/);
   await page
     .getByRole("button", { name: "Load previous commits", exact: true })
     .click();

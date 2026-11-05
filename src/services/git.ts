@@ -251,6 +251,20 @@ export const gitService = {
       );
     return data;
   },
+  async commitCount(
+    repo: Repository,
+    currentOnly: boolean,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    if (repo.demo)
+      return (await gitService.log(repo, 0, currentOnly, signal)).length;
+    return readCall(
+      repo,
+      "repository_commit_count",
+      { location: repo.location, currentOnly },
+      signal,
+    );
+  },
   async log(
     repo: Repository,
     skip: number,

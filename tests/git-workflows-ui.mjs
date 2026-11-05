@@ -154,6 +154,7 @@ try {
             tracking: { ahead: 2, behind: 1 },
             operation: window.qaConflict ? "merge" : null,
           };
+        if (command === "repository_commit_count") return 8;
         if (command === "repository_detail")
           return { message: "Initial commit\n\nPreserve body", files: [] };
         if (command === "repository_action") {
@@ -202,6 +203,7 @@ try {
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.locator(".sidebar-repo").first().click();
   await page.locator(".commit-row").first().waitFor();
+  await page.waitForFunction(() => document.querySelector(".history-count")?.textContent.includes("8 commits"));
   assert.equal(await page.locator(".ref-legend").count(), 0);
   assert.equal(
     await page

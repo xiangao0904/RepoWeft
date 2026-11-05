@@ -60,6 +60,7 @@ pub fn run() {
             tasks::repository_cancel,
             git::repository_snapshot,
             git::repository_log,
+            git::repository_commit_count,
             git::repository_detail,
             git::repository_conflict,
             diffs::repository_diff_open,

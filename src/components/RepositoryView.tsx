@@ -50,12 +50,7 @@ import { CommitGraph } from "./CommitGraph";
 import { githubRepository } from "../lib/avatars";
 import { layoutGraph } from "../lib/graph";
 
-import {
-  CommitActions,
-  ConflictEditor,
-  OperationStatus,
-  WorkspaceTools,
-} from "./GitTools";
+import { CommitActions, ConflictEditor, OperationStatus, WorkspaceTools } from "./GitTools";
 import { conflicted } from "../lib/changes";
 import { useStored } from "../lib/storage";
 
@@ -231,6 +226,25 @@ function History(props: RepoViewProps) {
   const [query, setQuery] = useState("");
   const searchQuery = useDeferredValue(query.trim().toLowerCase());
   const [currentOnly, setCurrentOnly] = useState(false);
+  const [totalCommits, setTotalCommits] = useState<number | null>(null);
+  const [countFailed, setCountFailed] = useState(false);
+  const [countRetry, setCountRetry] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setTotalCommits(null);
+    setCountFailed(false);
+    void gitService
+      .commitCount(repo, currentOnly, controller.signal)
+      .then((count) => {
+        if (!controller.signal.aborted) setTotalCommits(count);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted && !isReadCancelled(error))
+          setCountFailed(true);
+      });
+    return () => controller.abort();
+  }, [repo, data.commits, data.branch, currentOnly, countRetry]);
+
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(data.commits.length === 100);
   const [detail, setDetail] = useState<CommitDetail | null>(null);
@@ -688,9 +702,19 @@ function History(props: RepoViewProps) {
           </div>
           <div className="panel-footer">
             <GitCommitHorizontal size={13} />
-            <span>
-              {commits.length} {t("commits")}
+            <span className="history-count" title={t("commitCountHint")}>
+              {countFailed
+                ? t("commitCountFailed")
+                : `${totalCommits === null ? "…" : totalCommits.toLocaleString(locale)} ${t("commits")}`}
             </span>
+            {countFailed && (
+              <button
+                className="text-button"
+                onClick={() => setCountRetry((value) => value + 1)}
+              >
+                {t("retry")}
+              </button>
+            )}
             <span className="footer-spacer" />
             <span>{t(currentOnly ? "currentBranch" : "allBranches")}</span>
           </div>

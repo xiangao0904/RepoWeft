@@ -14,6 +14,7 @@ RepoWeft runs these operations through the installed Git client for local reposi
 - The workspace tools section lists local tags and stashes, publishes the current branch, pushes tags to a selected remote, and supports stash creation, apply, pop, and deletion.
 - Branches can be renamed, switched, created, safely deleted, merged, and checked out from remote tracking branches.
 - Fetch updates all remotes, prunes deleted tracking branches, and fetches tags. Pull uses fast-forward only.
+- The history footer counts the complete selected history with `git rev-list --count`, independently of the 100-row paging and 1000-commit memory window. All-branch counts deduplicate shared commits and include detached HEAD; current-branch counts follow the same first-parent scope as the graph. Counts refresh after history changes, and failures offer a retry instead of displaying a loaded-row estimate.
 - Force push explicitly names the configured upstream branch and its expected object ID. Git rejects the push when that remote branch has changed since the last fetch. It never falls back to an unconditional force push.
 
 ## GitHub access checks

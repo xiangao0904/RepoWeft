@@ -375,6 +375,37 @@ fn log(location: &Location, skip: usize, current_only: bool) -> Result<Vec<Commi
         }
     }
 }
+fn commit_count(location: &Location, current_only: bool) -> Result<usize, String> {
+    let scope = if current_only {
+        "--first-parent"
+    } else {
+        "--all"
+    };
+    let raw = match git(location, &["rev-list", "--count", scope, "HEAD", "--"]) {
+        Ok(raw) => raw,
+        Err(error) => {
+            if git(location, &["rev-parse", "--verify", "HEAD"]).is_ok() {
+                return Err(error);
+            }
+            git(location, &["rev-parse", "--git-dir"])?;
+            if current_only {
+                return Ok(0);
+            }
+            git(location, &["rev-list", "--count", "--all", "--"])?
+        }
+    };
+    raw.trim()
+        .parse::<usize>()
+        .map_err(|_| "Invalid commit count returned by Git".into())
+}
+#[tauri::command]
+pub async fn repository_commit_count(
+    location: Location,
+    current_only: bool,
+    request_id: Option<String>,
+) -> Result<usize, String> {
+    crate::tasks::read(request_id, move || commit_count(&location, current_only)).await
+}
 fn file_status(location: &Location, expand_untracked: bool) -> Result<Vec<FileChange>, String> {
     let raw = git(
         location,
@@ -1770,6 +1801,36 @@ mod tests {
                 .count(),
             1
         );
+    }
+    #[test]
+    fn history_counts_cover_unloaded_commits_and_match_branch_scope() {
+        let (_dir, loc) = workflow_repo();
+        assert_eq!(commit_count(&loc, false).unwrap(), 0);
+        assert_eq!(commit_count(&loc, true).unwrap(), 0);
+        let mut stream = String::new();
+        for index in 0..1505 {
+            let message = format!("Commit {index}");
+            stream.push_str(&format!("commit refs/heads/main\ncommitter Count Test <count@example.test> 1700000000 +0000\ndata {}\n{message}\n\n", message.len()));
+        }
+        let mut command = Command::new("git");
+        command.args(["-C", &loc.path, "fast-import", "--quiet"]);
+        output_with_input(command, 30, Some(stream.into_bytes())).unwrap();
+        git(&loc, &["reset", "--hard", "HEAD"]).unwrap();
+        git(&loc, &["branch", "same-tip", "HEAD"]).unwrap();
+        assert_eq!(log(&loc, 0, false).unwrap().len(), 100);
+        assert_eq!(log(&loc, 1400, false).unwrap().len(), 100);
+        assert_eq!(commit_count(&loc, false).unwrap(), 1505);
+        assert_eq!(commit_count(&loc, true).unwrap(), 1505);
+        git(&loc, &["switch", "-c", "side", "HEAD~1"]).unwrap();
+        run_action(&loc, "commit", "Side commit", "", &[], true).unwrap();
+        git(&loc, &["switch", "main"]).unwrap();
+        git(&loc, &["merge", "--no-ff", "--no-edit", "side"]).unwrap();
+        assert_eq!(commit_count(&loc, false).unwrap(), 1507);
+        assert_eq!(commit_count(&loc, true).unwrap(), 1506);
+        git(&loc, &["switch", "--detach", "HEAD~1"]).unwrap();
+        run_action(&loc, "commit", "Detached commit", "", &[], true).unwrap();
+        assert_eq!(commit_count(&loc, false).unwrap(), 1508);
+        assert_eq!(commit_count(&loc, true).unwrap(), 1506);
     }
     #[test]
     fn history_actions_preserve_trees_and_rewrite_root_and_descendants() {
