@@ -95,10 +95,12 @@ const CommitRow = memo(function CommitRow({
   onContext,
   remoteNames,
   tracking,
+  refGap,
 }: {
   onContext: (commit: Commit) => void;
   remoteNames: string[];
   tracking?: Snapshot["tracking"];
+  refGap: number;
   commit: Commit;
   selected: boolean;
   githubRepo: string | null;
@@ -108,14 +110,14 @@ const CommitRow = memo(function CommitRow({
   return (
     <button
       className={`commit-row ${selected ? "selected" : ""}`}
+      style={{ "--ref-gap": `${refGap}px` } as CSSProperties}
       onClick={() => onSelect(c)}
       onContextMenu={(e) => {
         e.preventDefault();
         onContext(c);
       }}
     >
-      <div className="commit-row-title">
-        <strong>{c.message}</strong>
+      <div className="commit-row-body">
         {!!c.refs.length && (
           <div className="commit-inline-refs">
             {c.refs.slice(0, 2).map((ref) => (
@@ -144,19 +146,24 @@ const CommitRow = memo(function CommitRow({
             )}
           </div>
         )}
-      </div>
-      <div className="commit-meta">
-        <Avatar
-          name={c.author}
-          email={c.email}
-          githubRepo={githubRepo}
-          hash={c.hash}
-        />
-        <span>{c.author}</span>
-        <span className="meta-dot">·</span>
-        <code>{c.hash.slice(0, 7)}</code>
-        <span className="meta-dot">·</span>
-        <span>{relativeTime(c.timestamp, locale, t)}</span>
+        <div className="commit-row-copy">
+          <div className="commit-row-title">
+            <strong>{c.message}</strong>
+          </div>
+          <div className="commit-meta">
+            <Avatar
+              name={c.author}
+              email={c.email}
+              githubRepo={githubRepo}
+              hash={c.hash}
+            />
+            <span>{c.author}</span>
+            <span className="meta-dot">·</span>
+            <code>{c.hash.slice(0, 7)}</code>
+            <span className="meta-dot">·</span>
+            <span>{relativeTime(c.timestamp, locale, t)}</span>
+          </div>
+        </div>
       </div>
     </button>
   );
@@ -577,7 +584,7 @@ function History(props: RepoViewProps) {
                 />
                 <div className="commit-rows">
                   <div style={{ height: start * rowHeight, flexShrink: 0 }} />
-                  {visible.slice(start, end).map((c) => (
+                  {visible.slice(start, end).map((c, index) => (
                     <CommitRow
                       key={c.hash}
                       commit={c}
@@ -587,6 +594,12 @@ function History(props: RepoViewProps) {
                       onContext={openActions}
                       remoteNames={remoteNames}
                       tracking={data.tracking}
+                      refGap={Math.max(
+                        0,
+                        graph.width +
+                          16 -
+                          (37 + graph.points[start + index].rightmostLane * 20),
+                      )}
                     />
                   ))}
                   <div

@@ -3489,15 +3489,29 @@ textarea,
 .commit-row-title > strong {
   flex: 1 1 auto;
 }
+.commit-row-body {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+}
+.commit-row-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
 .commit-inline-refs {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
   flex: 0 1 auto;
   max-width: 55%;
-  min-width: 0;
-  margin-left: auto;
+  min-width: max(0px, calc(var(--ref-gap) - 8px));
+  margin-left: calc(-1 * var(--ref-gap));
 }
 .commit-inline-refs > .branch-badge {
   min-width: 0;

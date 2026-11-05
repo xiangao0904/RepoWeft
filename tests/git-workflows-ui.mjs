@@ -240,9 +240,13 @@ try {
       .getBoundingClientRect();
     const list = document.querySelector(".commit-list").getBoundingClientRect();
     return {
-      ordered: node.right < message.x && message.right <= label.x,
+      ordered: node.right < label.x && label.right <= message.x,
       graphOffset: graph.x - list.x,
-      titleOffset: message.x - list.x,
+      titleOffset:
+        document
+          .querySelectorAll(".commit-row")[1]
+          .querySelector(".commit-row-title > strong")
+          .getBoundingClientRect().x - list.x,
       rowHeight: row.height,
     };
   });

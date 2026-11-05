@@ -25,6 +25,19 @@ test("linear history shares one lane", () => {
   );
   assert.equal(graph.edges.length, 2);
 });
+
+test("reference labels clear passing lanes as branches merge", () => {
+  const graph = layoutGraph([
+    commit("merge", ["left", "right"]),
+    commit("left", ["base"]),
+    commit("right", ["base"]),
+    commit("base"),
+  ]);
+  assert.equal(graph.points[1].lane, 0);
+  assert.equal(graph.points[1].rightmostLane, 1);
+  assert.equal(graph.points[2].rightmostLane, 1);
+  assert.equal(graph.points[3].rightmostLane, 0);
+});
 test("merge edges land on their parent nodes across branches", () => {
   const graph = layoutGraph([
     commit("merge", ["left", "right"]),
