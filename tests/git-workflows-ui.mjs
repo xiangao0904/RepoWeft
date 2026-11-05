@@ -61,6 +61,7 @@ try {
     localStorage.setItem("repoweft.v1.locale", JSON.stringify("en"));
     localStorage.setItem("repoweft.v1.accountsWelcomeSeen", "true");
     const hash = "1".repeat(40);
+    window.qaHeadIndex = 0;
     window.qaActions = [];
     window.qaConflict = false;
     window.isTauri = true;
@@ -75,30 +76,56 @@ try {
         if (command === "repository_snapshot")
           return {
             branch: "main",
-            commits: [
-              {
-                hash,
-                parents: [],
-                message: "Initial commit",
-                author: "QA",
-                email: "",
-                timestamp: Date.now(),
-                refs: ["HEAD -> refs/heads/main", "refs/remotes/origin/main"],
-              },
-            ],
+            commits: Array.from({ length: 8 }, (_, i) => ({
+              hash: String(i + 1).repeat(40),
+              parents:
+                i === 1
+                  ? ["4".repeat(40)]
+                  : i < 7
+                    ? [String(i + 2).repeat(40)]
+                    : [],
+              message: [
+                "Initial commit",
+                "Improve repository history",
+                "Add branch navigation",
+                "Keep the worktree in sync",
+                "Refine conflict resolution",
+                "Last published commit",
+                "Prepare release notes",
+                "Create repository",
+              ][i],
+              author: "QA",
+              email: "",
+              timestamp: Date.now() - i * 60000,
+              refs:
+                i === window.qaHeadIndex
+                  ? ["HEAD -> refs/heads/main"]
+                  : i === 2
+                    ? ["refs/heads/feature/navigation"]
+                    : i === 5
+                      ? ["refs/remotes/origin/main"]
+                      : i === 7
+                        ? [
+                            "tag: refs/tags/v1",
+                            "refs/heads/release",
+                            "refs/heads/archive",
+                            "refs/remotes/origin/release",
+                          ]
+                        : [],
+            })),
             branches: [
               {
                 name: "main",
                 current: true,
                 remote: false,
-                hash,
+                hash: String(window.qaHeadIndex + 1).repeat(40),
                 upstream: "origin/main",
               },
               {
                 name: "origin/main",
                 current: false,
                 remote: true,
-                hash,
+                hash: "6".repeat(40),
                 upstream: "",
               },
             ],
@@ -147,16 +174,112 @@ try {
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.locator(".sidebar-repo").first().click();
   await page.locator(".commit-row").first().waitFor();
+  assert.equal(await page.locator(".ref-legend").count(), 0);
+  assert.equal(
+    await page
+      .locator(".commit-row")
+      .first()
+      .locator(".ref-local .ref-name")
+      .innerText(),
+    "main",
+  );
   assert.match(
-    await page.locator(".ref-legend").innerText(),
+    await page
+      .locator(".commit-row")
+      .first()
+      .locator(".ref-current")
+      .getAttribute("title"),
     /2 commits to push/,
   );
-  assert.equal(await page.locator(".commit-row .ref-local").count(), 1);
-  assert.equal(await page.locator(".commit-row .ref-remote").count(), 1);
+  assert.equal(
+    await page.locator(".commit-row").first().locator(".lucide-laptop").count(),
+    1,
+  );
+  assert.equal(
+    await page
+      .locator(".commit-row")
+      .nth(5)
+      .locator(".ref-remote .ref-name")
+      .innerText(),
+    "origin/main",
+  );
+  assert.equal(
+    await page.locator(".commit-row").nth(5).locator(".lucide-cloud").count(),
+    1,
+  );
+  assert.equal(
+    await page
+      .locator(".commit-row")
+      .nth(7)
+      .locator(".ref-overflow")
+      .innerText(),
+    "+2",
+  );
+  const alignment = await page.evaluate(() => {
+    const row = document
+      .querySelectorAll(".commit-row")[5]
+      .getBoundingClientRect();
+    const label = document
+      .querySelectorAll(".commit-row")[5]
+      .querySelector(".ref-remote")
+      .getBoundingClientRect();
+    const node = document
+      .querySelectorAll(".commit-graph > g")[5]
+      .querySelector("circle")
+      .getBoundingClientRect();
+    const message = document
+      .querySelectorAll(".commit-row")[5]
+      .querySelector(".commit-row-title")
+      .getBoundingClientRect();
+    return {
+      centerDelta: Math.abs(
+        label.y + label.height / 2 - node.y - node.height / 2,
+      ),
+      ordered: label.right < node.x && node.right < message.x,
+      rowHeight: row.height,
+    };
+  });
+  assert.ok(alignment.centerDelta <= 1, JSON.stringify(alignment));
+  assert.ok(alignment.ordered, JSON.stringify(alignment));
+  assert.equal(alignment.rowHeight, 44);
   await page.screenshot({
     animations: "disabled",
     path: path.join(tmpdir(), "repoweft-history-actions.png"),
   });
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+  });
+  await page.screenshot({
+    animations: "disabled",
+    path: path.join(tmpdir(), "repoweft-history-refs-light.png"),
+  });
+  await page.evaluate(() => {
+    document.documentElement.dataset.theme = "dark";
+    window.qaHeadIndex = 3;
+  });
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.locator(".commit-row").nth(3).locator(".ref-current").waitFor();
+  assert.equal(
+    await page
+      .locator(".commit-graph > g")
+      .nth(3)
+      .locator('circle[r="7"]')
+      .count(),
+    1,
+  );
+  assert.equal(
+    await page
+      .locator(".commit-graph > g")
+      .first()
+      .locator('circle[r="7"]')
+      .count(),
+    0,
+  );
+  await page.evaluate(() => {
+    window.qaHeadIndex = 0;
+  });
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.locator(".commit-row").first().locator(".ref-current").waitFor();
   const commit = page.locator(".commit-form .primary-button");
   await page.getByRole("textbox", { name: "Summary (required)" }).count();
   await page

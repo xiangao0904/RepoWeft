@@ -1,7 +1,7 @@
 import { gravatar, resolveGithubAvatar } from "../lib/avatars";
 import logo from "../../assets/logo/repoweft-icon.svg";
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
-import { X, GitBranch, FolderGit2 } from "lucide-react";
+import { X, Check, Cloud, Laptop, Tag, FolderGit2 } from "lucide-react";
 import { useI18n } from "../lib/i18n";
 
 export function Brand({ large = false }: { large?: boolean }) {
@@ -101,24 +101,39 @@ export function Modal({
 export function BranchBadge({
   name,
   remote = false,
+  hint,
 }: {
   name: string;
   remote?: boolean;
+  hint?: string;
 }) {
   const { t } = useI18n();
-  const tag = name.startsWith("tag: ");
+  const isRemote = remote || name.startsWith("refs/remotes/");
+  const tag = name.startsWith("tag: ") || name.startsWith("refs/tags/");
+  const current = name === "HEAD" || name.startsWith("HEAD -> ");
+  const label = name
+    .replace("HEAD -> ", "")
+    .replace(/^tag: /, "")
+    .replace(/^refs\/(heads|remotes|tags)\//, "");
+  const kind = tag ? "tag" : isRemote ? "remote" : "local";
+  const title = [
+    t(tag ? "tagRef" : isRemote ? "remoteRef" : "localRef"),
+    label,
+    hint,
+    isRemote ? t("refLegend") : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const Icon = tag ? Tag : isRemote ? Cloud : Laptop;
   return (
     <span
-      className={`branch-badge ref-${tag ? "tag" : remote ? "remote" : "local"}`}
-      title={t(tag ? "tagRef" : remote ? "remoteRef" : "localRef")}
+      className={`branch-badge ref-${kind}${current ? " ref-current" : ""}`}
+      title={title}
+      aria-label={title}
     >
-      <GitBranch size={11} />
-      <b>{t(tag ? "tagRef" : remote ? "remoteRef" : "localRef")}</b>
-      {name
-        .replace("HEAD -> ", "")
-        .replace("refs/heads/", "")
-        .replace("refs/remotes/", "")
-        .replace("refs/tags/", "")}
+      {current && <Check size={11} aria-hidden="true" />}
+      <span className="ref-name">{label}</span>
+      <Icon size={12} aria-hidden="true" />
     </span>
   );
 }

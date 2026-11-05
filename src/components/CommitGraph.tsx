@@ -5,11 +5,13 @@ export function CommitGraph({
   start,
   end,
   rowHeight,
+  currentIndex = -1,
 }: {
   graph: ReturnType<typeof layoutGraph>;
   start: number;
   end: number;
   rowHeight: number;
+  currentIndex?: number;
 }) {
   return (
     <svg
@@ -45,14 +47,14 @@ export function CommitGraph({
             <circle
               cx={25 + point.lane * 20}
               cy={i * rowHeight + rowHeight / 2}
-              r={i === 0 ? 7 : 5}
+              r={i === currentIndex ? 7 : 5}
               fill={point.color}
-              opacity={i === 0 ? ".18" : "1"}
+              opacity={i === currentIndex ? ".18" : "1"}
             />
-            {i === 0 && (
+            {i === currentIndex && (
               <circle
                 cx={25 + point.lane * 20}
-                cy={rowHeight / 2}
+                cy={i * rowHeight + rowHeight / 2}
                 r="4"
                 fill={point.color}
               />

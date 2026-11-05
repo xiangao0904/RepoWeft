@@ -87,32 +87,6 @@ export function RepositoryView(props: RepoViewProps) {
   );
 }
 
-function RepositorySync({ data }: { data: Snapshot }) {
-  const { t } = useI18n();
-  const branch = data.branches.find((b) => b.current);
-  const upstream = data.branches.find(
-    (b) => b.remote && b.name === branch?.upstream,
-  );
-  return (
-    <div className="ref-legend">
-      <span className="ref-local">
-        {t("localRef")}: {data.branch} <code>{branch?.hash.slice(0, 7)}</code>
-      </span>
-      <span className="ref-remote">
-        {t("remoteRef")}: {branch?.upstream || t("noUpstream")}{" "}
-        <code>{upstream?.hash.slice(0, 7)}</code>
-      </span>
-      {data.tracking && (
-        <strong>
-          {data.tracking.ahead} {t("aheadCommits")} · {data.tracking.behind}{" "}
-          {t("behindCommits")}
-        </strong>
-      )}
-      <small>{t("refLegend")}</small>
-    </div>
-  );
-}
-
 const CommitRow = memo(function CommitRow({
   commit: c,
   selected,
@@ -120,9 +94,15 @@ const CommitRow = memo(function CommitRow({
   onSelect,
   onContext,
   remoteNames,
+  lane,
+  laneColor,
+  tracking,
 }: {
   onContext: (commit: Commit) => void;
   remoteNames: string[];
+  lane: number;
+  laneColor: string;
+  tracking?: Snapshot["tracking"];
   commit: Commit;
   selected: boolean;
   githubRepo: string | null;
@@ -132,24 +112,48 @@ const CommitRow = memo(function CommitRow({
   return (
     <button
       className={`commit-row ${selected ? "selected" : ""}`}
+      style={
+        {
+          "--ref-connector-width": `${21 + lane * 20}px`,
+          "--lane-color": laneColor,
+        } as CSSProperties
+      }
       onClick={() => onSelect(c)}
       onContextMenu={(e) => {
         e.preventDefault();
         onContext(c);
       }}
     >
+      {!!c.refs.length && (
+        <div className="commit-ref-rail">
+          {c.refs.slice(0, 2).map((ref) => (
+            <BranchBadge
+              key={ref}
+              name={ref}
+              remote={
+                ref.startsWith("refs/remotes/") ||
+                remoteNames.some((name) => ref.startsWith(`${name}/`))
+              }
+              hint={
+                ref.startsWith("HEAD -> ") && tracking
+                  ? `${tracking.ahead} ${t("aheadCommits")} · ${tracking.behind} ${t("behindCommits")}`
+                  : undefined
+              }
+            />
+          ))}
+          {c.refs.length > 2 && (
+            <span
+              className="ref-overflow"
+              title={c.refs.slice(2).join("\n")}
+              aria-label={t("moreReferences")}
+            >
+              +{c.refs.length - 2}
+            </span>
+          )}
+        </div>
+      )}
       <div className="commit-row-title">
         <strong>{c.message}</strong>
-        {c.refs.map((ref) => (
-          <BranchBadge
-            key={ref}
-            name={ref}
-            remote={
-              ref.startsWith("refs/remotes/") ||
-              remoteNames.some((name) => ref.startsWith(`${name}/`))
-            }
-          />
-        ))}
       </div>
       <div className="commit-meta">
         <Avatar
@@ -409,7 +413,6 @@ function History(props: RepoViewProps) {
       <div className="repository-center-column">
         <OperationStatus {...props} />
         <WorkspaceTools {...props} />
-        <RepositorySync data={data} />
         {!selected &&
           workingDiff &&
           (data.files.some(
@@ -502,6 +505,14 @@ function History(props: RepoViewProps) {
             </div>
           </div>
           <div
+            className="history-columns"
+            style={{ "--graph-width": `${graph.width}px` } as CSSProperties}
+          >
+            <span>{t("branchTags")}</span>
+            <span>{t("graph")}</span>
+            <span>{t("commitMessage")}</span>
+          </div>
+          <div
             ref={scrollRef}
             className="commit-list-scroll"
             onScroll={(e) => {
@@ -564,7 +575,7 @@ function History(props: RepoViewProps) {
               />
             ) : (
               <div
-                className="commit-list"
+                className="commit-list graph-with-refs"
                 style={{ "--graph-width": `${graph.width}px` } as CSSProperties}
               >
                 <CommitGraph
@@ -572,10 +583,19 @@ function History(props: RepoViewProps) {
                   start={start}
                   end={end}
                   rowHeight={rowHeight}
+                  currentIndex={visible.findIndex(
+                    (c) =>
+                      c.refs.some(
+                        (ref) => ref === "HEAD" || ref.startsWith("HEAD -> "),
+                      ) ||
+                      !!data.branches.find(
+                        (b) => b.current && c.hash.startsWith(b.hash),
+                      ),
+                  )}
                 />
                 <div className="commit-rows">
                   <div style={{ height: start * rowHeight, flexShrink: 0 }} />
-                  {visible.slice(start, end).map((c) => (
+                  {visible.slice(start, end).map((c, index) => (
                     <CommitRow
                       key={c.hash}
                       commit={c}
@@ -584,6 +604,9 @@ function History(props: RepoViewProps) {
                       onSelect={selectCommit}
                       onContext={openActions}
                       remoteNames={remoteNames}
+                      lane={graph.points[start + index].lane}
+                      laneColor={graph.points[start + index].color}
+                      tracking={data.tracking}
                     />
                   ))}
                   <div

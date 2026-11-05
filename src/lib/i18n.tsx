@@ -1,6 +1,10 @@
 import { createContext, useContext } from "react";
 
 export const en = {
+  branchTags: "Branch / Tag",
+  graph: "Graph",
+  commitMessage: "Commit message",
+  moreReferences: "More branches and tags at this commit",
   oursVersion: "Ours",
   theirsVersion: "Theirs",
   useVersion: "Use this version",
@@ -427,6 +431,10 @@ export const en = {
 export type MessageKey = keyof typeof en;
 export type Locale = "en" | "zh-CN";
 export const zh: Record<MessageKey, string> = {
+  branchTags: "分支 / 标签",
+  graph: "提交图",
+  commitMessage: "提交说明",
+  moreReferences: "此提交上的更多分支和标签",
   oursVersion: "我方版本",
   theirsVersion: "对方版本",
   useVersion: "采用此版本",
