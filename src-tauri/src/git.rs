@@ -440,7 +440,7 @@ pub async fn repository_snapshot(
         snapshot_sections(
             &location,
             sections.as_deref(),
-            expand_untracked.unwrap_or(true),
+            expand_untracked.unwrap_or(false),
         )
     })
     .await

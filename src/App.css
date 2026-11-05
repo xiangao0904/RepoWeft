@@ -3425,3 +3425,12 @@ textarea,
   font-size: 12px;
   line-height: 1.6;
 }
+
+/* Fixed heights keep virtual list geometry independent of mounted row count. */
+.virtual-list-items > * {
+  height: var(--virtual-row-height);
+  min-height: var(--virtual-row-height);
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.diff-view pre > div { white-space: pre; }

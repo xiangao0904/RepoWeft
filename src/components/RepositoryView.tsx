@@ -1,3 +1,6 @@
+import { VirtualList, VirtualDiff } from "./VirtualList";
+import { appendHistory } from "../lib/windowing";
+import { isReadCancelled } from "../lib/requests";
 import { createPageGate } from "../lib/paging";
 import {
   memo,
@@ -55,6 +58,7 @@ export interface RepoViewProps {
   tab: RepoTab;
   busy: boolean;
   onAction: (action: Action) => Promise<boolean>;
+  onExpandUntracked: () => Promise<void>;
   onPrompt: (type: "branch" | "remote") => void;
   onConfirm: (message: MessageKey, action: Action) => void;
   notify: (message: string, error?: boolean) => void;
@@ -136,6 +140,21 @@ function History(props: RepoViewProps) {
   } | null>(null);
   const [copied, setCopied] = useState(false);
   const pageGate = useRef(createPageGate());
+  const pageAbort = useRef<AbortController | null>(null);
+  const offset = useRef(0);
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const selectCommit = useCallback(
+    (commit: Commit) =>
+      setSelected((old) => (old?.hash === commit.hash ? null : commit)),
+    [],
+  );
+  useEffect(
+    () => () => {
+      pageGate.current.invalidate();
+      pageAbort.current?.abort();
+    },
+    [],
+  );
   const [pageError, setPageError] = useState(false);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [inspectorWidth, setInspectorWidth] = useStored("inspectorWidth", 350);
@@ -164,6 +183,11 @@ function History(props: RepoViewProps) {
   }, [query, currentOnly, data.branch]);
   useEffect(() => {
     const request = pageGate.current.invalidate();
+    pageAbort.current?.abort();
+    const controller = new AbortController();
+    pageAbort.current = controller;
+    offset.current = 0;
+    setHistoryOffset(0);
     let cancelled = false;
     setPageError(false);
     if (!currentOnly) {
@@ -177,7 +201,7 @@ function History(props: RepoViewProps) {
     }
     setLoading(true);
     void gitService
-      .log(repo, 0, currentOnly)
+      .log(repo, 0, currentOnly, controller.signal)
       .then((next) => {
         if (cancelled || !pageGate.current.isCurrent(request)) return;
         setCommits(next);
@@ -185,7 +209,7 @@ function History(props: RepoViewProps) {
         setSelected((old) => next.find((c) => c.hash === old?.hash) ?? null);
       })
       .catch((error) => {
-        if (!cancelled) notify(String(error), true);
+        if (!cancelled && !isReadCancelled(error)) notify(String(error), true);
       })
       .finally(() => {
         if (!cancelled && pageGate.current.isCurrent(request))
@@ -193,17 +217,19 @@ function History(props: RepoViewProps) {
       });
     return () => {
       cancelled = true;
+      controller.abort();
       pageGate.current.invalidate();
     };
   }, [repo, data.commits, currentOnly, notify]);
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     setDetail(null);
     setDetailError("");
     setFile(null);
     if (selected)
       gitService
-        .detail(repo, selected.hash)
+        .detail(repo, selected.hash, controller.signal)
         .then((value) => {
           if (!cancelled) setDetail(value);
         })
@@ -212,6 +238,7 @@ function History(props: RepoViewProps) {
         });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [repo, selected?.hash]);
   const loadMore = useCallback(async () => {
@@ -220,13 +247,30 @@ function History(props: RepoViewProps) {
     if (request === null) return;
     setLoading(true);
     try {
-      const next = await gitService.log(repo, commits.length, currentOnly);
+      const controller = new AbortController();
+      pageAbort.current = controller;
+      const next = await gitService.log(
+        repo,
+        offset.current + commits.length,
+        currentOnly,
+        controller.signal,
+      );
       if (pageGate.current.isCurrent(request)) {
-        setCommits((previous) => [...previous, ...next]);
+        const window = appendHistory(commits, next, offset.current);
+        offset.current = window.offset;
+        setHistoryOffset(window.offset);
+        setCommits(window.items);
+        if (window.removed && scrollRef.current) {
+          scrollRef.current.scrollTop = Math.max(
+            0,
+            scrollRef.current.scrollTop - window.removed * rowHeight,
+          );
+          setScrollTop(scrollRef.current.scrollTop);
+        }
         setHasMore(next.length === 100);
       }
     } catch (error) {
-      if (pageGate.current.isCurrent(request)) {
+      if (pageGate.current.isCurrent(request) && !isReadCancelled(error)) {
         setPageError(true);
         notify(String(error), true);
       }
@@ -235,7 +279,7 @@ function History(props: RepoViewProps) {
         setLoading(false);
       }
     }
-  }, [repo, commits.length, currentOnly, loading, hasMore, pageError, notify]);
+  }, [repo, commits, currentOnly, loading, hasMore, pageError, notify]);
   useEffect(() => {
     const target = sentinelRef.current;
     if (!target || !hasMore || pageError) return;
@@ -377,6 +421,44 @@ function History(props: RepoViewProps) {
               setScrollTop((previous) => (previous === top ? previous : top));
             }}
           >
+            {historyOffset > 0 && (
+              <button
+                className="text-button"
+                disabled={loading}
+                onClick={async () => {
+                  const token = pageGate.current.begin();
+                  if (token === null) return;
+                  setLoading(true);
+                  const controller = new AbortController();
+                  pageAbort.current = controller;
+                  try {
+                    const previousOffset = Math.max(0, offset.current - 100);
+                    const previous = await gitService.log(
+                      repo,
+                      previousOffset,
+                      currentOnly,
+                      controller.signal,
+                    );
+                    if (!pageGate.current.isCurrent(token)) return;
+                    offset.current = previousOffset;
+                    setHistoryOffset(previousOffset);
+                    setCommits((items) =>
+                      [...previous, ...items].slice(0, 1000),
+                    );
+                    setHasMore(true);
+                    setPageError(false);
+                    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+                    setScrollTop(0);
+                  } catch (error) {
+                    if (!isReadCancelled(error)) notify(String(error), true);
+                  } finally {
+                    if (pageGate.current.finish(token)) setLoading(false);
+                  }
+                }}
+              >
+                {t("loadPrevious")}
+              </button>
+            )}
             {loading && !commits.length ? (
               <div
                 className="diff-loading"
@@ -410,11 +492,7 @@ function History(props: RepoViewProps) {
                       commit={c}
                       selected={selected?.hash === c.hash}
                       githubRepo={githubRepo}
-                      onSelect={(commit) =>
-                        setSelected((old) =>
-                          old?.hash === commit.hash ? null : commit,
-                        )
-                      }
+                      onSelect={selectCommit}
                     />
                   ))}
                   <div
@@ -577,8 +655,11 @@ function History(props: RepoViewProps) {
                       {t("filesChanged")}
                       <span className="count">{detail.files.length}</span>
                     </div>
-                    <div className="changed-files">
-                      {detail.files.map((f) => (
+                    <VirtualList
+                      className="changed-files"
+                      items={detail.files}
+                      rowHeight={32}
+                      render={(f) => (
                         <button
                           key={f.path}
                           className={file === f.path ? "active" : ""}
@@ -592,8 +673,8 @@ function History(props: RepoViewProps) {
                           <b className="addition">+{f.added}</b>
                           <b className="deletion">−{f.deleted}</b>
                         </button>
-                      ))}
-                    </div>
+                      )}
+                    />
                     <div className="diff-stats">
                       <span className="addition">
                         +
@@ -669,10 +750,11 @@ function Diff({
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     setError("");
     gitService
-      .diff(repo, path, staged, hash, untracked)
+      .diff(repo, path, staged, hash, untracked, controller.signal)
       .then((result) => {
         if (!cancelled) setText(result);
       })
@@ -684,6 +766,7 @@ function Diff({
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [repo, path, staged, hash, untracked]);
   if (loading)
@@ -694,29 +777,7 @@ function Diff({
     );
   if (error) return <p className="inline-error">{error}</p>;
   if (!text) return <Empty icon={<FileCode2 />} title={t("noDiff")} />;
-  return (
-    <div className={`diff-view ${compact ? "compact" : ""}`}>
-      <pre>
-        {text.split("\n").map((line, i) => (
-          <div
-            key={i}
-            className={
-              line.startsWith("+")
-                ? "diff-add"
-                : line.startsWith("-")
-                  ? "diff-remove"
-                  : line.startsWith("@@")
-                    ? "diff-hunk"
-                    : ""
-            }
-          >
-            <span className="line-number">{i + 1}</span>
-            <span>{line || " "}</span>
-          </div>
-        ))}
-      </pre>
-    </div>
-  );
+  return <VirtualDiff text={text} compact={compact} />;
 }
 
 function Changes({
@@ -724,6 +785,7 @@ function Changes({
   data,
   busy,
   onAction,
+  onExpandUntracked,
   onPreview,
 }: RepoViewProps & {
   onPreview?: (path: string, staged: boolean, untracked: boolean) => void;
@@ -767,39 +829,50 @@ function Changes({
             {t(isStaged ? "unstageAll" : "stageAll")}
           </button>
         </header>
-        {files.map((f) => (
-          <div
-            key={f.path}
-            className={`file-row ${selected?.file.path === f.path && selected.staged === isStaged ? "selected" : ""}`}
-          >
-            <button
-              onClick={() => {
-                setSelected({ file: f, staged: isStaged });
-                onPreview?.(f.path, isStaged, f.index === "?");
-              }}
+        <VirtualList
+          items={files}
+          rowHeight={44}
+          render={(f) => (
+            <div
+              key={f.path}
+              className={`file-row ${selected?.file.path === f.path && selected.staged === isStaged ? "selected" : ""}`}
             >
-              <span className={`file-status ${f.index === "?" ? "new" : ""}`}>
-                {f.index === "?" ? "U" : isStaged ? f.index : f.worktree}
-              </span>
-              <FileText size={14} />
-              <span>{f.path}</span>
-            </button>
-            <button
-              className="icon-button"
-              disabled={busy}
-              title={t(isStaged ? "unstage" : "stage")}
-              aria-label={`${t(isStaged ? "unstage" : "stage")} ${f.path}`}
-              onClick={() =>
-                void onAction({
-                  kind: isStaged ? "unstage" : "stage",
-                  paths: [f.path, ...(f.originalPath ? [f.originalPath] : [])],
-                })
-              }
-            >
-              {isStaged ? <Minus size={15} /> : <Plus size={15} />}
-            </button>
-          </div>
-        ))}
+              <button
+                onClick={() => {
+                  if (f.index === "?" && f.path.endsWith("/")) {
+                    void onExpandUntracked();
+                    return;
+                  }
+                  setSelected({ file: f, staged: isStaged });
+                  onPreview?.(f.path, isStaged, f.index === "?");
+                }}
+              >
+                <span className={`file-status ${f.index === "?" ? "new" : ""}`}>
+                  {f.index === "?" ? "U" : isStaged ? f.index : f.worktree}
+                </span>
+                <FileText size={14} />
+                <span>{f.path}</span>
+              </button>
+              <button
+                className="icon-button"
+                disabled={busy}
+                title={t(isStaged ? "unstage" : "stage")}
+                aria-label={`${t(isStaged ? "unstage" : "stage")} ${f.path}`}
+                onClick={() =>
+                  void onAction({
+                    kind: isStaged ? "unstage" : "stage",
+                    paths: [
+                      f.path,
+                      ...(f.originalPath ? [f.originalPath] : []),
+                    ],
+                  })
+                }
+              >
+                {isStaged ? <Minus size={15} /> : <Plus size={15} />}
+              </button>
+            </div>
+          )}
+        />
       </section>
     );
   }
@@ -815,6 +888,17 @@ function Changes({
             />
           ) : (
             <>
+              {data.files.some(
+                (f) => f.index === "?" && f.path.endsWith("/"),
+              ) && (
+                <button
+                  className="text-button"
+                  disabled={busy}
+                  onClick={() => void onExpandUntracked()}
+                >
+                  {t("expandUntracked")}
+                </button>
+              )}
               {fileGroup(unstaged, false)}
               {fileGroup(staged, true)}
             </>
@@ -926,9 +1010,10 @@ function RepositoryLists({
               </span>
             </h3>
             <div className="surface-list">
-              {data.branches
-                .filter((b) => b.remote === remote)
-                .map((b) => (
+              <VirtualList
+                items={data.branches.filter((b) => b.remote === remote)}
+                rowHeight={84}
+                render={(b) => (
                   <div key={b.name} className="branch-list-row">
                     <span className={`list-icon ${b.current ? "accent" : ""}`}>
                       <GitBranch size={19} />
@@ -987,7 +1072,8 @@ function RepositoryLists({
                       </div>
                     )}
                   </div>
-                ))}
+                )}
+              />
               {!data.branches.some((b) => b.remote === remote) && (
                 <div className="list-empty">{t("noBranches")}</div>
               )}
@@ -997,30 +1083,34 @@ function RepositoryLists({
       ) : (
         <div className="surface-list">
           {data.remotes.length ? (
-            data.remotes.map((r) => (
-              <div className="remote-list-row" key={r.name}>
-                <span className="list-icon accent">
-                  <Globe2 size={21} />
-                </span>
-                <div className="list-row-main">
-                  <strong>{r.name}</strong>
-                  <code>{r.url}</code>
+            <VirtualList
+              items={data.remotes}
+              rowHeight={84}
+              render={(r) => (
+                <div className="remote-list-row" key={r.name}>
+                  <span className="list-icon accent">
+                    <Globe2 size={21} />
+                  </span>
+                  <div className="list-row-main">
+                    <strong>{r.name}</strong>
+                    <code>{r.url}</code>
+                  </div>
+                  <button
+                    className="icon-button danger-hover"
+                    aria-label={`${t("remove")} ${r.name}`}
+                    disabled={busy}
+                    onClick={() =>
+                      onConfirm("removeRemoteWarning", {
+                        kind: "removeRemote",
+                        value: r.name,
+                      })
+                    }
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 </div>
-                <button
-                  className="icon-button danger-hover"
-                  aria-label={`${t("remove")} ${r.name}`}
-                  disabled={busy}
-                  onClick={() =>
-                    onConfirm("removeRemoteWarning", {
-                      kind: "removeRemote",
-                      value: r.name,
-                    })
-                  }
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            ))
+              )}
+            />
           ) : (
             <Empty
               icon={<Globe2 size={28} />}
@@ -1119,23 +1209,28 @@ function BranchSwitcher({ data, busy, onAction }: RepoViewProps) {
             aria-label={t("searchBranches")}
           />
           <div>
-            {branches.map((b) => (
-              <button
-                key={b.name}
-                disabled={busy || b.current}
-                onClick={() => {
-                  void onAction({ kind: "switchBranch", value: b.name }).then(
-                    (ok) => {
-                      if (ok) setOpen(false);
-                    },
-                  );
-                }}
-              >
-                <GitBranch size={14} />
-                <span>{b.name}</span>
-                {b.current && <Check size={14} />}
-              </button>
-            ))}
+            <VirtualList
+              items={branches}
+              maxHeight="240px"
+              rowHeight={36}
+              render={(b) => (
+                <button
+                  key={b.name}
+                  disabled={busy || b.current}
+                  onClick={() => {
+                    void onAction({ kind: "switchBranch", value: b.name }).then(
+                      (ok) => {
+                        if (ok) setOpen(false);
+                      },
+                    );
+                  }}
+                >
+                  <GitBranch size={14} />
+                  <span>{b.name}</span>
+                  {b.current && <Check size={14} />}
+                </button>
+              )}
+            />
             {!branches.length && <p>{t("noResults")}</p>}
           </div>
         </div>

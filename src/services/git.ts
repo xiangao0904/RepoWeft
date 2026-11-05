@@ -192,7 +192,7 @@ export const gitService = {
     signal?: AbortSignal,
     sections?: (keyof Snapshot)[],
     previous?: Snapshot,
-    expandUntracked = true,
+    expandUntracked = false,
   ): Promise<Snapshot> {
     const data: Snapshot = repo.demo
       ? structuredClone(sample)

@@ -1,3 +1,4 @@
+import { isReadCancelled } from "./lib/requests";
 import {
   AccountsProvider,
   AccountButton,
@@ -10,6 +11,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useMemo,
   useState,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -110,6 +112,10 @@ export default function App() {
   const repositoryPicker = useRef<HTMLDivElement>(null);
   const operationLock = useRef(false);
   const request = useRef(0);
+  const repositoryLoad = useRef<{
+    repo: Repository;
+    controller: AbortController;
+  } | null>(null);
   const authAnswer = useRef<((value: boolean | null) => void) | null>(null);
   const dictionary = locale === "en" ? en : zh;
   const t = useCallback(
@@ -175,6 +181,12 @@ export default function App() {
     signal?: AbortSignal,
   ): Promise<boolean> {
     if (operationLock.current || signal?.aborted) return false;
+    repositoryLoad.current?.controller.abort();
+    const controller = new AbortController();
+    repositoryLoad.current = { repo: next, controller };
+    const abort = () => controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (repo && repo.id !== next.id) gitService.cancelReads(repo);
     const id = ++request.current;
     const cancel = () => {
       if (request.current === id) {
@@ -192,7 +204,7 @@ export default function App() {
       setTab("history");
     }
     try {
-      const snapshot = await gitService.snapshot(next);
+      const snapshot = await gitService.snapshot(next, controller.signal);
       if (request.current !== id) return false;
       const existing = repositories.find(
         (r) =>
@@ -225,21 +237,33 @@ export default function App() {
         ]);
       return true;
     } catch (error) {
-      if (request.current === id && !signal?.aborted)
+      if (request.current === id && !signal?.aborted && !isReadCancelled(error))
         notify(errorText(error, t), true);
       return false;
     } finally {
       signal?.removeEventListener("abort", cancel);
+      signal?.removeEventListener("abort", abort);
+      if (repositoryLoad.current?.controller === controller)
+        repositoryLoad.current = null;
       if (request.current === id) setBusy(false);
     }
   }
   function closeRepository(id: string) {
-    if (busy || operationLock.current) return;
+    if (operationLock.current) return;
+    const closing = openRepositories.find((item) => item.id === id);
+    if (closing) gitService.release(closing);
+    if (repositoryLoad.current?.repo.id === id) {
+      repositoryLoad.current.controller.abort();
+      repositoryLoad.current = null;
+      ++request.current;
+      setBusy(false);
+    }
     const index = openRepositories.findIndex((item) => item.id === id);
     const remaining = openRepositories.filter((item) => item.id !== id);
     setOpenRepositories(remaining);
     if (repo?.id !== id) return;
     ++request.current;
+    setBusy(false);
     setRepo(null);
     setData(null);
     setTerminalOpen(false);
@@ -257,7 +281,7 @@ export default function App() {
       const result = await gitService.snapshot(repo);
       if (id === request.current) setData(result);
     } catch (e) {
-      notify(errorText(e, t), true);
+      if (!isReadCancelled(e)) notify(errorText(e, t), true);
     } finally {
       if (id === request.current) setBusy(false);
     }
@@ -268,7 +292,7 @@ export default function App() {
     setBusy(true);
     try {
       await gitService.action(repo, action);
-      setData(await gitService.snapshot(repo));
+      setData(await gitService.refreshAfterAction(repo, action, data));
       notify(t("operationSuccess"));
       return true;
     } catch (error) {
@@ -344,6 +368,7 @@ export default function App() {
     onViewAll: () => setPage("workspaces"),
     onServers: () => setPage("servers"),
   };
+  const i18nValue = useMemo(() => ({ locale, t }), [locale, t]);
   const isRepo = page === "repository" && repo && data;
   const nav = [
     { page: "home", key: "home", icon: HomeIcon },
@@ -373,7 +398,7 @@ export default function App() {
   };
 
   return (
-    <I18nContext.Provider value={{ locale, t }}>
+    <I18nContext.Provider value={i18nValue}>
       <AccountsProvider>
         <div className="app-shell">
           <header
@@ -579,7 +604,7 @@ export default function App() {
                     key={r.id}
                     repo={r}
                     active={Boolean(isRepo && repo.id === r.id)}
-                    closeDisabled={busy}
+                    closeDisabled={operationLock.current}
                     onClose={() => closeRepository(r.id)}
                     onClick={() => {
                       void openRepo(r);
@@ -676,6 +701,26 @@ export default function App() {
                       tab={tab}
                       busy={busy}
                       onAction={action}
+                      onExpandUntracked={async () => {
+                        if (operationLock.current) return;
+                        const id = ++request.current;
+                        setBusy(true);
+                        try {
+                          const result = await gitService.snapshot(
+                            repo,
+                            undefined,
+                            ["files"],
+                            data,
+                            true,
+                          );
+                          if (id === request.current) setData(result);
+                        } catch (error) {
+                          if (!isReadCancelled(error))
+                            notify(errorText(error, t), true);
+                        } finally {
+                          if (id === request.current) setBusy(false);
+                        }
+                      }}
                       onPrompt={(type) => setDialog({ type })}
                       onConfirm={confirm}
                       notify={notify}
