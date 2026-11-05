@@ -16,6 +16,7 @@ import {
 } from "react";
 import {
   ArrowLeft,
+  ArrowDownToLine,
   ArrowRight,
   Check,
   ChevronRight,
@@ -106,6 +107,7 @@ export default function App() {
     message: string;
     error: boolean;
   } | null>(null);
+  const repositoryPicker = useRef<HTMLDivElement>(null);
   const operationLock = useRef(false);
   const request = useRef(0);
   const authAnswer = useRef<((value: boolean | null) => void) | null>(null);
@@ -498,10 +500,79 @@ export default function App() {
                     className="icon-button"
                     title={t("open")}
                     aria-label={t("open")}
-                    onClick={() => setDialog({ type: "open" })}
+                    popoverTarget="repository-picker"
+                    onClick={(event) => {
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      const picker = repositoryPicker.current;
+                      if (picker) {
+                        picker.style.left = `${Math.min(rect.left, window.innerWidth - 340)}px`;
+                        picker.style.top = `${Math.min(rect.bottom + 8, Math.max(8, window.innerHeight - 360))}px`;
+                      }
+                    }}
                   >
                     <Plus size={14} />
                   </button>
+                  <div
+                    id="repository-picker"
+                    ref={repositoryPicker}
+                    popover="auto"
+                    className="repository-picker"
+                  >
+                    <div className="repository-picker-actions">
+                      <button
+                        onClick={() => {
+                          repositoryPicker.current?.hidePopover();
+                          setDialog({ type: "open" });
+                        }}
+                      >
+                        <FolderGit2 size={15} />
+                        {t("open")}
+                      </button>
+                      <button
+                        onClick={() => {
+                          repositoryPicker.current?.hidePopover();
+                          setDialog({ type: "clone" });
+                        }}
+                      >
+                        <ArrowDownToLine size={15} />
+                        {t("clone")}
+                      </button>
+                    </div>
+                    <div className="repository-picker-label">{t("recent")}</div>
+                    <div className="repository-picker-list">
+                      {repositories.slice(0, 20).map((item) => (
+                        <button
+                          key={item.id}
+                          disabled={busy}
+                          onClick={() => {
+                            repositoryPicker.current?.hidePopover();
+                            void openRepo(item);
+                          }}
+                          title={item.location.path}
+                        >
+                          {item.location.kind === "ssh" ? (
+                            <Server size={16} />
+                          ) : (
+                            <FolderGit2 size={16} />
+                          )}
+                          <span>
+                            <strong>{item.name}</strong>
+                            <small>
+                              {item.location.kind === "ssh"
+                                ? `${item.location.host.name} · ${item.location.path}`
+                                : item.location.path}
+                            </small>
+                          </span>
+                          {openRepositories.some(
+                            (opened) => opened.id === item.id,
+                          ) && <Check size={14} />}
+                        </button>
+                      ))}
+                      {!repositories.length && (
+                        <p>{t("noRepositoriesDescription")}</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
                 {openRepositories.map((r) => (
                   <SidebarRepo
